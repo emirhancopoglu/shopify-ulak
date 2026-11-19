@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Mail Templater
 
-## Getting Started
+Shopify mağazalarını bul → analiz et → filtrele → şablonlu mail gönder. Tamamen yerel ve ücretsiz.
 
-First, run the development server:
+> AI araçları (Claude Code, Cursor vb.) için proje bağlamı: [AGENTS.md](AGENTS.md)
+
+## Çalıştırma
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env   # değerleri doldurun (açıklamalar dosyada)
+npm run dev        # veritabanı migration + web (localhost:3000) + worker
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run dev` iki süreç açar:
+- **web**: Next.js arayüzü
+- **worker**: arka planda analiz (ve ileride gönderim) işlerini yürütür
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Veritabanı `data/app.db` dosyasındadır (SQLite, git'e girmez).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Gizli dosyalar (git'e girmez, yedekleyin):** `.env` (şifreleme anahtarı `APP_SECRET_KEY`, Outlook Client ID) ve `data/` klasörü. `APP_SECRET_KEY` kaybolursa kayıtlı hesap şifreleri çözülemez.
 
-## Learn More
+## Faydalı komutlar
 
-To learn more about Next.js, take a look at the following resources:
+| Komut | Ne yapar |
+|---|---|
+| `npm run analyze -- ornek.com.tr` | Tek bir alan adını terminalde analiz eder (DB'ye yazmaz) |
+| `npm run test:campaign` | Gönderim motoru testi (ayrı test DB, mail ağa çıkmaz) |
+| `npm run db:generate` | Şema değişince yeni migration üretir |
+| `npm run db:studio` | Veritabanını tarayıcıda görüntüler |
+| `npm run typecheck` / `npm run lint` | Kontroller |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Yapı
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+src/db/              şema (Drizzle) ve bağlantı
+src/lib/analyzer/    Shopify tespiti, meta/products, mail bulma, TR puanı
+src/lib/jobs.ts      SQLite tabanlı iş kuyruğu
+src/lib/stores.ts    mağaza ekleme/listeleme/analiz kaydı
+src/app/stores/      Mağazalar ekranı
+worker/              arka plan işçisi
+drizzle/             migration dosyaları
+```
 
-## Deploy on Vercel
+## Yol haritası
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- [x] F0 Kurulum
+- [x] F1 Mağaza ekleme + analiz
+- [x] F2 Liste, filtreler, sıralama, sayfalama, CSV, detay paneli
+- [x] F3 Şablonlar, Gmail hesabı + imza, kampanyalar, saatlik/günlük sınırlı gönderim, kara liste
+- [ ] F4 Otomatik keşif (Common Crawl, arama, DNS)
+- [x] F5a Outlook (kişisel hesap, OAuth)
+- [ ] F5b Yanıt/bounce takibi (IMAP), takip maili
