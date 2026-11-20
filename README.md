@@ -48,6 +48,6 @@ drizzle/             migration dosyaları
 - [x] F1 Mağaza ekleme + analiz
 - [x] F2 Liste, filtreler, sıralama, sayfalama, CSV, detay paneli
 - [x] F3 Şablonlar, Gmail hesabı + imza, kampanyalar, saatlik/günlük sınırlı gönderim, kara liste
-- [ ] F4 Otomatik keşif (Common Crawl, arama, DNS)
+- [x] F4 Otomatik keşif (DuckDuckGo araması, Common Crawl, DNS listesi)
 - [x] F5a Outlook (kişisel hesap, OAuth)
 - [ ] F5b Yanıt/bounce takibi (IMAP), takip maili

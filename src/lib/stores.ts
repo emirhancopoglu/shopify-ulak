@@ -71,6 +71,21 @@ export async function runStoreAnalysis(storeId: number) {
   if (!store) return; // bu arada silinmiş
   db.update(stores).set({ status: "analyzing" }).where(eq(stores.id, storeId)).run();
   const result = await analyzeStore(store.domain);
+
+  // Aynı mağaza başka bir adresle (ör. myshopify adresi ve asıl alan adı) zaten listede mi?
+  if (result.myshopifyDomain) {
+    const twin = db.$client
+      .prepare(`SELECT domain FROM stores WHERE myshopify_domain = ? AND id != ? AND status != 'duplicate' ORDER BY id LIMIT 1`)
+      .get(result.myshopifyDomain, storeId) as { domain: string } | undefined;
+    if (twin) {
+      db.update(stores)
+        .set({ status: "duplicate", error: `${twin.domain} ile aynı mağaza`, myshopifyDomain: result.myshopifyDomain, finalUrl: result.finalUrl, analyzedAt: new Date() })
+        .where(eq(stores.id, storeId))
+        .run();
+      db.delete(contacts).where(eq(contacts.storeId, storeId)).run();
+      return;
+    }
+  }
   saveAnalysis(storeId, result);
 }
 

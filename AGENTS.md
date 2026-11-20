@@ -65,6 +65,8 @@ src/lib/campaign-labels.ts client-safe status labels
 src/app/stores/           Stores screen: page (server), filters-bar, stores-table, store-drawer, actions, export/route.ts (CSV)
 src/app/templates/        list + [id] editor (live preview, variable chips, content hints, test send)
 src/app/campaigns/        list + [id] detail (settings, start/pause/stop, progress, ETA, countdown, preview, recipients)
+src/lib/discovery/        F4 discovery: probe.ts (meta.json → shopify/TR/primary domain), ddg.ts (DuckDuckGo HTML + query builder + default TR keywords), commoncrawl.ts (CDX with retries), dns.ts (Shopify IP/CNAME), runs.ts (discovery_runs CRUD), runner.ts (resumable runs, ingest pipeline)
+src/app/discover/         discovery screen: 3 source forms + run cards (progress, stats, log, cancel/resume)
 src/app/settings/         Gmail accounts (app password + signature), Outlook setup + connect/reconnect, suppression list
 src/components/           nav, multi-select, auto-refresh, ui.ts (shared Tailwind class strings)
 worker/index.ts           two loops: job queue (concurrency 6) + send loop (every 2s → tickCampaigns). Graceful shutdown waits for an in-flight send
@@ -154,7 +156,14 @@ Before finishing a change, run `npm run typecheck && npm run lint`. For analyzer
 - [x] **F1** Add stores (paste/CSV) → analyze → table
 - [x] **F2** Filters (status, country, language, currency, apps, source, email, TR score, activity, category, product range, search), sorting, pagination, select-all-matching, bulk re-analyze/delete, CSV export, detail drawer with contact management
 - [x] **F3** Templates (plain text default, optional HTML), Gmail accounts with signature (`{{imza}}`), campaigns from store selection, throttled sending with daily cap and auto-pause, suppression list, test send, "already emailed" store filter
-- [ ] **F4** Automatic discovery (all free):
+- [x] **F4** Automatic discovery (all free). Findings from live probes (2026-11-20):
+  - **DuckDuckGo** HTML: `site:myshopify.com <tr keyword>` works well; most results are Turkish Shopify stores. It only serves the first page (10 results): next-page POSTs and `inurl:` queries get 202. Volume therefore comes from keyword × variation queries, spaced 10–16s apart, with backoff on 202 (stops as `blocked` after 3 tries; resumable).
+  - Bing, Mojeek and Brave show captchas; don't use them.
+  - **Common Crawl** CDX: `pageSize=1` gives ~100 stores per page, but the server often returns 504 (we retry 4× with backoff). Turkish ratio is under 1%, so use it with the TR filter.
+  - **DNS**: apex A `23.227.38.*` or www CNAME `*.myshopify.com`.
+  - The ingest pipeline: skip known (domain or myshopify_domain) → `probeStore` (meta.json) → TR filter → add by **primary domain**. Analysis marks later twins (same myshopify_domain) as status `duplicate`.
+  - Only one active discovery run at a time.
+- (original F4 plan, kept for reference):
   - Common Crawl CDX index for `*.myshopify.com`, then resolve the real domain via `/meta.json`
   - Search-engine HTML results (slow, polite)
   - DNS check (Shopify IP `23.227.38.x` / CNAME `shops.myshopify.com`) for bulk domain lists

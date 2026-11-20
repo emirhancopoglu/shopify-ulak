@@ -8,6 +8,7 @@ export const STATUS_LABEL: Record<StoreStatus, { label: string; cls: string }> =
   not_shopify: { label: "Shopify değil", cls: "bg-stone-200 text-stone-600" },
   unreachable: { label: "Açılmadı", cls: "bg-red-100 text-red-800" },
   error: { label: "Hata", cls: "bg-red-100 text-red-800" },
+  duplicate: { label: "Kopya", cls: "bg-stone-100 text-stone-500 line-through" },
 };
 
 const regionNames = new Intl.DisplayNames(["tr"], { type: "region" });

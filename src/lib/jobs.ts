@@ -1,7 +1,7 @@
 import { db, schema } from "@/db";
 
-export type JobType = "analyze_store";
-export type JobPayloads = { analyze_store: { storeId: number } };
+export type JobType = "analyze_store" | "discover";
+export type JobPayloads = { analyze_store: { storeId: number }; discover: { runId: number } };
 
 export type ClaimedJob = { id: number; type: string; payload: unknown; attempts: number };
 

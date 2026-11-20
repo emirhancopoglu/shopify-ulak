@@ -18,6 +18,7 @@ export const STORE_STATUSES = [
   "password", // şifre korumalı (açılmamış) mağaza
   "unreachable", // site açılmadı
   "error",
+  "duplicate", // başka bir kayıtla aynı mağaza (aynı myshopify adresi)
 ] as const;
 export type StoreStatus = (typeof STORE_STATUSES)[number];
 
@@ -205,6 +206,42 @@ export const suppression = sqliteTable("suppression", {
   note: text("note"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
 });
+
+// ---------------------------------------------------------------------------
+// Keşif (F4)
+// ---------------------------------------------------------------------------
+
+export const DISCOVERY_SOURCES = ["search", "commoncrawl", "dns"] as const;
+export type DiscoverySource = (typeof DISCOVERY_SOURCES)[number];
+export const DISCOVERY_STATUSES = ["queued", "running", "done", "failed", "cancelled", "blocked"] as const;
+export type DiscoveryStatus = (typeof DISCOVERY_STATUSES)[number];
+
+export type DiscoveryStats = {
+  total: number; // işlenecek toplam birim (sorgu / sayfa / alan adı)
+  cursor: number; // kaldığı yer (devam ettirmek için)
+  candidates: number; // bulunan benzersiz aday adres
+  known: number; // zaten listede olan
+  shopify: number; // Shopify olduğu doğrulanan
+  matched: number; // filtreye uyan (ör. Türk)
+  added: number; // listeye eklenen
+};
+
+export const discoveryRuns = sqliteTable("discovery_runs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  source: text("source", { enum: DISCOVERY_SOURCES }).notNull(),
+  status: text("status", { enum: DISCOVERY_STATUSES }).notNull().default("queued"),
+  /** Kaynağa göre parametreler (kelimeler, dizin, alan adları, trOnly …) */
+  params: text("params", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  stats: text("stats", { mode: "json" }).$type<DiscoveryStats>().notNull(),
+  /** Son olaylar (en yeni sonda), arayüzde gösterilir */
+  log: text("log", { mode: "json" }).$type<string[]>().notNull(),
+  error: text("error"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }),
+  finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+});
+
+export type DiscoveryRun = typeof discoveryRuns.$inferSelect;
 
 export type Store = typeof stores.$inferSelect;
 export type Contact = typeof contacts.$inferSelect;

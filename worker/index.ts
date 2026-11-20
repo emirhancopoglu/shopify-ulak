@@ -7,6 +7,7 @@
 import { describeError } from "../src/lib/analyzer/http";
 import { recoverInterruptedSends, tickCampaigns } from "../src/lib/campaigns";
 import { claimJobs, failJob, finishJob, pruneJobs, requeueRunning, writeHeartbeat, type ClaimedJob } from "../src/lib/jobs";
+import { runDiscovery } from "../src/lib/discovery/runner";
 import { runStoreAnalysis } from "../src/lib/stores";
 
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 6);
@@ -15,6 +16,7 @@ const SEND_TICK_MS = 2000;
 
 const handlers: Record<string, (payload: never) => Promise<void>> = {
   analyze_store: ({ storeId }: { storeId: number }) => runStoreAnalysis(storeId),
+  discover: ({ runId }: { runId: number }) => runDiscovery(runId),
 };
 
 const active = new Set<Promise<void>>();

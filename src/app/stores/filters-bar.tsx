@@ -36,7 +36,7 @@ const CONTACTED_OPTIONS = [
   { value: "yes", label: "Atıldı" },
 ];
 
-const SOURCE_LABEL: Record<string, string> = { manual: "Elle", test: "Test" };
+const SOURCE_LABEL: Record<string, string> = { manual: "Elle", test: "Test", search: "Arama", commoncrawl: "Common Crawl", dns: "DNS listesi" };
 
 export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; facets: StoreFacets; total: number }) {
   const router = useRouter();

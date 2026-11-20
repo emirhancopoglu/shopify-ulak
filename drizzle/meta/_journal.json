@@ -22,6 +22,13 @@
       "when": 1795127898605,
       "tag": "0002_sending",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1795133200869,
+      "tag": "0003_discovery",
+      "breakpoints": true
     }
   ]
 }

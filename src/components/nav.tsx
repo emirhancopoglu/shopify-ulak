@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 const ITEMS: { href: string; label: string; soon?: string }[] = [
   { href: "/stores", label: "Mağazalar" },
-  { href: "/discover", label: "Keşif", soon: "F4" },
+  { href: "/discover", label: "Keşif" },
   { href: "/templates", label: "Şablonlar" },
   { href: "/campaigns", label: "Kampanyalar" },
   { href: "/settings", label: "Ayarlar" },
