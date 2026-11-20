@@ -1,5 +1,5 @@
-# Mail Templater
 
+<<<<<<< HEAD
 Shopify mağazalarını bul → analiz et → filtrele → şablonlu mail gönder. Tamamen yerel ve ücretsiz.
 
 > AI araçları (Claude Code, Cursor vb.) için proje bağlamı: [AGENTS.md](AGENTS.md)
@@ -51,3 +51,5 @@ drizzle/             migration dosyaları
 - [x] F4 Otomatik keşif (DuckDuckGo araması, Common Crawl, DNS listesi)
 - [x] F5a Outlook (kişisel hesap, OAuth)
 - [ ] F5b Yanıt/bounce takibi (IMAP), takip maili
+=======
+>>>>>>> fbf3b73be315b2d6daec626a30865ac33eaa7e46
