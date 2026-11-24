@@ -43,3 +43,6 @@ next-env.d.ts
 
 # yerel veritabanı, şifreleme anahtarı ve test veritabanları
 /data
+
+# proje notları — GitHub'da yayınlanmasın
+README.md
