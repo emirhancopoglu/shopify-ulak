@@ -126,14 +126,14 @@ export const templates = sqliteTable("templates", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
 });
 
-export const ACCOUNT_PROVIDERS = ["gmail", "outlook"] as const;
+export const ACCOUNT_PROVIDERS = ["gmail", "outlook", "smtp"] as const;
 
 export const accounts = sqliteTable("accounts", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   provider: text("provider", { enum: ACCOUNT_PROVIDERS }).notNull(),
   email: text("email").notNull(),
   fromName: text("from_name").notNull(),
-  /** AES-256-GCM ile şifreli. Gmail: uygulama şifresi; Outlook: {"refreshToken"} JSON. Anahtar: data/secret.key */
+  /** AES-256-GCM ile şifreli. Gmail: uygulama şifresi; Outlook: {"refreshToken"} JSON; smtp (kurumsal): {host,port,secure,user,password} JSON. Anahtar: data/secret.key */
   secret: text("secret").notNull(),
   /** Kayan 24 saatlik pencerede en fazla gönderim. */
   dailyLimit: integer("daily_limit").notNull().default(400),

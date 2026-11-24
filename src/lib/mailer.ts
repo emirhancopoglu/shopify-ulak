@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Account } from "@/db/schema";
 import { OutlookAuthError, outlookAccessToken } from "@/lib/outlook";
-import { decrypt } from "@/lib/secret";
+import { decrypt, encrypt } from "@/lib/secret";
 import { getSetting } from "@/lib/settings";
 
 /**
@@ -19,7 +19,32 @@ const DRY_RUN = process.env.MAIL_TRANSPORT === "json";
 
 const TIMEOUTS = { connectionTimeout: 20_000, greetingTimeout: 20_000, socketTimeout: 60_000 };
 
-export const PROVIDER_LABEL: Record<Account["provider"], string> = { gmail: "Gmail", outlook: "Outlook" };
+export const PROVIDER_LABEL: Record<Account["provider"], string> = { gmail: "Gmail", outlook: "Outlook", smtp: "Kurumsal mail" };
+
+/**
+ * Kurumsal (genel) SMTP hesabı: hosting firmasının verdiği sunucu bilgileri.
+ * secure=true → doğrudan SSL/TLS (genelde 465); false → STARTTLS (genelde 587).
+ */
+export type SmtpConfig = { host: string; port: number; secure: boolean; user: string; password: string };
+
+export const encodeSmtpSecret = (cfg: SmtpConfig) => encrypt(JSON.stringify(cfg));
+
+export function decodeSmtpSecret(secret: string): SmtpConfig {
+  const cfg = JSON.parse(decrypt(secret)) as Partial<SmtpConfig>;
+  if (!cfg.host || !cfg.port || !cfg.user || !cfg.password) throw new Error("Kurumsal SMTP hesabının bilgileri okunamadı; hesabı silip yeniden ekleyin.");
+  return { host: cfg.host, port: cfg.port, secure: Boolean(cfg.secure), user: cfg.user, password: cfg.password };
+}
+
+export function smtpTransport(cfg: SmtpConfig) {
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    requireTLS: !cfg.secure,
+    auth: { user: cfg.user, pass: cfg.password },
+    ...TIMEOUTS,
+  });
+}
 
 function gmailTransport(email: string, password: string) {
   return nodemailer.createTransport({
@@ -46,6 +71,7 @@ async function transportFor(account: Account) {
   if (DRY_RUN) return nodemailer.createTransport({ jsonTransport: true });
   if (account.provider === "gmail") return gmailTransport(account.email, decrypt(account.secret));
   if (account.provider === "outlook") return outlookTransport(account.email, await outlookAccessToken(account));
+  if (account.provider === "smtp") return smtpTransport(decodeSmtpSecret(account.secret));
   throw new Error(`Desteklenmeyen sağlayıcı: ${account.provider}`);
 }
 
@@ -53,6 +79,17 @@ async function transportFor(account: Account) {
 export async function verifyGmail(email: string, password: string) {
   if (DRY_RUN) return;
   const t = gmailTransport(email, password);
+  try {
+    await t.verify();
+  } finally {
+    t.close();
+  }
+}
+
+/** Kurumsal SMTP sunucusuna bağlanıp girişi kaydetmeden önce dener. */
+export async function verifySmtp(cfg: SmtpConfig) {
+  if (DRY_RUN) return;
+  const t = smtpTransport(cfg);
   try {
     await t.verify();
   } finally {
@@ -130,10 +167,23 @@ export function classifySendError(err: unknown, provider: Account["provider"] = 
       message:
         provider === "gmail"
           ? "Gmail girişi reddedildi. Uygulama şifresini Ayarlar'dan kontrol edin."
-          : "Outlook girişi reddedildi. Ayarlar'dan hesabı yeniden bağlayın.",
+          : provider === "smtp"
+            ? "Kurumsal mail girişi reddedildi. Ayarlar'dan kullanıcı adı ve şifreyi kontrol edin."
+            : "Outlook girişi reddedildi. Ayarlar'dan hesabı yeniden bağlayın.",
     };
   }
-  if (/5\.4\.5|sending limit|daily user sending quota|rate limit|4\.7\.0.*(limit|unusual)|5\.5\.0.*daily|exceeded.*(limit|quota)/i.test(text)) {
+  // Kurumsal SMTP: gönderen adres reddedildi / röle izni yok (MAIL FROM aşaması) → tekrar denemek işe yaramaz
+  if (provider === "smtp" && e.command === "MAIL FROM" && e.responseCode && e.responseCode >= 500) {
+    return {
+      kind: "auth",
+      message: withRaw(`${name} sunucusu gönderen adresi kabul etmedi. Kullanıcı adının gönderen adresle uyuştuğundan emin olun.`),
+    };
+  }
+  if (
+    /5\.4\.5|sending limit|daily user sending quota|rate limit|4\.7\.0.*(limit|unusual)|5\.5\.0.*daily|exceeded.*(limit|quota)|too many (emails|messages)|max(imum)? .*(emails|messages).*(hour|day)|hourly limit/i.test(
+      text,
+    )
+  ) {
     return { kind: "quota", message: withRaw(`${name} gönderim limitine takıldı. Bir süre bekleyip devam ettirin.`) };
   }
   if (e.responseCode && e.responseCode >= 550 && e.command === "RCPT TO") {

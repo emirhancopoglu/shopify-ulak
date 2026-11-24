@@ -16,7 +16,8 @@ Target market: **global, but Turkey-first**. Each store gets a `tr_score` (0–1
 ## Hard constraints (product decisions, don't relitigate)
 
 - **100% free.** No paid APIs or services (no StoreLeads/BuiltWith/Hunter/ZeroBounce/SerpAPI, no paid ESPs). Use only public endpoints, free data such as Common Crawl, DNS, and the user's own mailbox.
-- **Sending goes only through the user's own free Gmail or Outlook account.**
+- **Sending goes only through the user's own mailbox: free Gmail, free personal Outlook, or the user's own corporate mailbox over plain SMTP.**
+  - Corporate mail (added 2026-11-25, provider `smtp`): any hosting mailbox the user owns, via host/port/SSL-or-STARTTLS/username/password (e.g. `mail.guzel.net.tr:465` SSL/TLS). The settings are stored encrypted as JSON `{host,port,secure,user,password}` in `accounts.secret`. The connection is verified before saving. Default daily limit is 100 (hosting limits are unknown). Gmail and Outlook support stays unchanged.
   - Gmail: SMTP + **App Password** via Nodemailer. We deliberately do **not** use the Gmail API: unverified OAuth apps get refresh tokens that expire every 7 days.
   - Outlook (**personal accounts only**, decided 2026-11-20): OAuth 2.0 auth-code + **PKCE** (public client, no secret) against the `consumers` authority, then **SMTP `smtp-mail.outlook.com:587` with XOAUTH2** (scope `https://outlook.office.com/SMTP.Send`). We use SMTP rather than Graph because Graph cannot set `List-Unsubscribe`. The user registers a free Azure app once ("Personal Microsoft accounts only", platform "Mobile and desktop", redirect `http://localhost:3000/api/oauth/outlook/callback`) and provides the Client ID via `.env` `OUTLOOK_CLIENT_ID` (preferred, read-only in the UI) or pastes it in Settings (kv `outlook_client_id`). The refresh token is stored encrypted as JSON in `accounts.secret`, and every rotated refresh token is persisted. Default daily limit is 150 because Microsoft flags new personal accounts quickly.
 - **No cron or scheduled sends.** The user clicks "start" and the worker sends in throttled batches. Pause, resume and stop must work. Respect the account's daily cap (Gmail ~500/day, use ≤400; Outlook ~300/day, use ≤250) and stop automatically when the cap is reached.
@@ -52,10 +53,10 @@ src/lib/store-filters.ts  StoreFilters type + URL (de)serialization. Shared clie
 src/lib/format.ts         Turkish display helpers (status labels, country/language names, money, relative time)
 src/lib/template.ts       template engine: {{var}} / {{var|fallback}}, renderEmail, htmlToText, DEFAULT_TEMPLATE. Pure, client-safe
 src/lib/template-store.ts templates CRUD (+ seeds the user's default plain-text template)
-src/lib/accounts.ts       sender accounts (Gmail), sentInLast24h (rolling window)
+src/lib/accounts.ts       sender accounts (Gmail, Outlook, corporate SMTP), sentInLast24h (rolling window)
 src/lib/secret.ts         AES-256-GCM for account secrets; key = env APP_SECRET_KEY (64 hex), fallback data/secret.key. Losing it makes saved accounts unreadable
 src/lib/env.ts            loadDotEnv(): loads .env.local/.env for worker and scripts (Next loads them itself). Called from src/db/index.ts
-src/lib/mailer.ts         Nodemailer: Gmail SMTP (465, app password) and Outlook SMTP (587, XOAUTH2). List-Unsubscribe header, provider-aware classifySendError, DRY-RUN via MAIL_TRANSPORT=json
+src/lib/mailer.ts         Nodemailer: Gmail SMTP (465, app password), Outlook SMTP (587, XOAUTH2) and generic corporate SMTP (`smtp` provider). List-Unsubscribe header, provider-aware classifySendError, DRY-RUN via MAIL_TRANSPORT=json
 src/lib/outlook.ts        Microsoft OAuth (PKCE, consumers): authorize URL, code exchange, cached access token + refresh-token rotation, explainMicrosoftError (AADSTS → Turkish fix hints)
 src/lib/settings.ts       getSetting/setSetting on kv
 src/app/api/oauth/outlook/  start (sets httpOnly state+verifier cookie → Microsoft) and callback (verify state, exchange, SMTP verify, upsert account)
@@ -67,7 +68,7 @@ src/app/templates/        list + [id] editor (live preview, variable chips, cont
 src/app/campaigns/        list + [id] detail (settings, start/pause/stop, progress, ETA, countdown, preview, recipients)
 src/lib/discovery/        F4 discovery: probe.ts (meta.json → shopify/TR/primary domain), ddg.ts (DuckDuckGo HTML + query builder + default TR keywords), commoncrawl.ts (CDX with retries), dns.ts (Shopify IP/CNAME), runs.ts (discovery_runs CRUD), runner.ts (resumable runs, ingest pipeline)
 src/app/discover/         discovery screen: 3 source forms + run cards (progress, stats, log, cancel/resume)
-src/app/settings/         Gmail accounts (app password + signature), Outlook setup + connect/reconnect, suppression list
+src/app/settings/         Gmail accounts (app password + signature), corporate SMTP accounts, Outlook setup + connect/reconnect, suppression list
 src/components/           nav, multi-select, auto-refresh, ui.ts (shared Tailwind class strings)
 worker/index.ts           two loops: job queue (concurrency 6) + send loop (every 2s → tickCampaigns). Graceful shutdown waits for an in-flight send
 scripts/migrate.ts        applies drizzle/ migrations (runs before dev/start)
