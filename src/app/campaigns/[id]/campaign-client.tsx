@@ -126,7 +126,7 @@ export function SettingsForm({
           </select>
           {accounts.length === 0 && (
             <span className={ui.hint}>
-              Hesap yok. <Link href="/settings" className="underline">Ayarlar</Link>&apos;dan Gmail bağlayın.
+              Hesap yok. <Link href="/settings" className="underline">Ayarlar</Link>&apos;dan bir gönderen hesap bağlayın.
             </span>
           )}
         </label>

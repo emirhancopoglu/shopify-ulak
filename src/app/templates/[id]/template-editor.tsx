@@ -287,7 +287,7 @@ function TestSend({
   if (accounts.length === 0) {
     return (
       <p className="rounded-md border border-dashed border-stone-300 px-4 py-3 text-[13px] text-stone-500">
-        Test gönderimi için önce <a href="/settings" className="underline">Ayarlar</a>&apos;dan bir Gmail ya da Outlook hesabı bağlayın.
+        Test gönderimi için önce <a href="/settings" className="underline">Ayarlar</a>&apos;dan bir Gmail, Outlook ya da kurumsal mail hesabı bağlayın.
       </p>
     );
   }

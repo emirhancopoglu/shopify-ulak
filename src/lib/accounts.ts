@@ -1,14 +1,17 @@
 import { desc, eq, getTableColumns, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Account } from "@/db/schema";
-import { verifyGmail } from "@/lib/mailer";
+import { decodeSmtpSecret, encodeSmtpSecret, verifyGmail, verifySmtp, type SmtpConfig } from "@/lib/mailer";
 import { encodeOutlookSecret, forgetOutlookToken } from "@/lib/outlook";
 import { encrypt } from "@/lib/secret";
 
 const { accounts } = schema;
 
+/** Kurumsal SMTP hesabının arayüze gösterilebilen (şifresiz) bağlantı bilgileri. */
+export type SmtpPublicInfo = Pick<SmtpConfig, "host" | "port" | "secure" | "user">;
+
 /** Arayüze gönderilen güvenli görünüm (şifre içermez). */
-export type AccountView = Omit<Account, "secret"> & { sent24h: number };
+export type AccountView = Omit<Account, "secret"> & { sent24h: number; smtp: SmtpPublicInfo | null };
 
 export const DAY_MS = 24 * 3600_000;
 
@@ -27,13 +30,33 @@ export function sentInLast24h(accountId: number, now = Date.now()): number {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const { secret: _secret, ...publicColumns } = getTableColumns(accounts);
 
+/** Kurumsal SMTP hesaplarının sunucu bilgileri (şifre çözülür ama yalnızca şifresiz alanlar döner). */
+function smtpInfoById(): Map<number, SmtpPublicInfo> {
+  const rows = db
+    .select({ id: accounts.id, secret: accounts.secret })
+    .from(accounts)
+    .where(eq(accounts.provider, "smtp"))
+    .all();
+  const info = new Map<number, SmtpPublicInfo>();
+  for (const row of rows) {
+    try {
+      const { host, port, secure, user } = decodeSmtpSecret(row.secret);
+      info.set(row.id, { host, port, secure, user });
+    } catch {
+      // Anahtar kaybolmuş ya da bozuk kayıt: kart yine görünür, sunucu bilgisi boş kalır
+    }
+  }
+  return info;
+}
+
 export function listAccounts(): AccountView[] {
+  const smtpInfo = smtpInfoById();
   return db
     .select(publicColumns)
     .from(accounts)
     .orderBy(desc(accounts.id))
     .all()
-    .map((a) => ({ ...a, sent24h: sentInLast24h(a.id) }));
+    .map((a) => ({ ...a, sent24h: sentInLast24h(a.id), smtp: smtpInfo.get(a.id) ?? null }));
 }
 
 export function getAccount(id: number): Account | undefined {
@@ -66,7 +89,36 @@ export async function createGmailAccount(input: AccountInput) {
     .get();
 }
 
-export async function updateAccount(id: number, input: Omit<AccountInput, "password" | "email"> & { password?: string }) {
+export type SmtpAccountInput = {
+  email: string;
+  fromName: string;
+  dailyLimit: number;
+  signature: string;
+} & SmtpConfig;
+
+/** Kurumsal SMTP sunucusuna bağlanıp girişi doğrular, başarılıysa kaydeder. */
+export async function createSmtpAccount(input: SmtpAccountInput) {
+  const config: SmtpConfig = { host: input.host, port: input.port, secure: input.secure, user: input.user, password: input.password };
+  await verifySmtp(config);
+  return db
+    .insert(accounts)
+    .values({
+      provider: "smtp",
+      email: input.email,
+      fromName: input.fromName,
+      secret: encodeSmtpSecret(config),
+      dailyLimit: input.dailyLimit,
+      signature: input.signature,
+      lastVerifiedAt: new Date(),
+    })
+    .returning({ id: accounts.id })
+    .get();
+}
+
+export async function updateAccount(
+  id: number,
+  input: Omit<AccountInput, "password" | "email"> & { password?: string; smtp?: Omit<SmtpConfig, "password"> },
+) {
   const current = getAccount(id);
   if (!current) throw new Error("Hesap bulunamadı");
   const patch: Partial<typeof accounts.$inferInsert> = {
@@ -74,7 +126,23 @@ export async function updateAccount(id: number, input: Omit<AccountInput, "passw
     dailyLimit: input.dailyLimit,
     signature: input.signature,
   };
-  if (input.password) {
+  if (current.provider === "smtp") {
+    const old = decodeSmtpSecret(current.secret);
+    const next: SmtpConfig = {
+      host: input.smtp?.host ?? old.host,
+      port: input.smtp?.port ?? old.port,
+      secure: input.smtp?.secure ?? old.secure,
+      user: input.smtp?.user ?? old.user,
+      password: input.password || old.password,
+    };
+    const hasChanged = (Object.keys(next) as (keyof SmtpConfig)[]).some((k) => next[k] !== old[k]);
+    if (hasChanged) {
+      await verifySmtp(next);
+      patch.secret = encodeSmtpSecret(next);
+      patch.lastVerifiedAt = new Date();
+      patch.lastError = null;
+    }
+  } else if (input.password) {
     if (current.provider !== "gmail") throw new Error("Outlook hesabında şifre yok; yeniden bağlanmak için \"Yeniden bağlan\" kullanın.");
     await verifyGmail(current.email, input.password);
     patch.secret = encrypt(input.password.replace(/\s+/g, ""));

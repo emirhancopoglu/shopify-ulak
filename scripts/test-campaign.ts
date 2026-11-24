@@ -129,6 +129,43 @@ async function main() {
   assert.match(explainMicrosoftError("invalid_grant", "AADSTS7000012: The grant was obtained for a different tenant. Trace ID: x"), /tamamlanamadı: AADSTS7000012/);
   console.log("outlook kontrolleri geçti");
 
+  // --- Kurumsal SMTP: ekleme, şifre sızıntısı yok, düzenleme, gönderim (kuru mod), hata sınıflandırma
+  const { createSmtpAccount, listAccounts, updateAccount } = await import("../src/lib/accounts");
+  const { decodeSmtpSecret } = await import("../src/lib/mailer");
+  const sm = await createSmtpAccount({
+    email: "info@firma.com.tr",
+    fromName: "Firma",
+    dailyLimit: 100,
+    signature: "",
+    host: "mail.firma.com.tr",
+    port: 465,
+    secure: true,
+    user: "info@firma.com.tr",
+    password: "Gizli Şifre 1!",
+  });
+  const smRow = db.select().from(s.accounts).where(eq(s.accounts.id, sm.id)).get()!;
+  assert.equal(smRow.provider, "smtp");
+  assert(!smRow.secret.includes("Gizli"), "şifre düz metin saklanmamalı");
+  assert.equal(decodeSmtpSecret(smRow.secret).password, "Gizli Şifre 1!"); // boşluklar korunur
+  const smView = listAccounts().find((a) => a.id === sm.id)!;
+  assert.deepEqual(smView.smtp, { host: "mail.firma.com.tr", port: 465, secure: true, user: "info@firma.com.tr" });
+  assert(!JSON.stringify(smView).includes("Gizli"), "arayüz görünümünde şifre olmamalı");
+  await updateAccount(sm.id, { fromName: "Firma Ekibi", dailyLimit: 80, signature: "", smtp: { host: "smtp.firma.com.tr", port: 587, secure: false, user: "info@firma.com.tr" } });
+  const smAfter = decodeSmtpSecret(db.select().from(s.accounts).where(eq(s.accounts.id, sm.id)).get()!.secret);
+  assert.deepEqual([smAfter.host, smAfter.port, smAfter.secure, smAfter.password], ["smtp.firma.com.tr", 587, false, "Gizli Şifre 1!"]); // şifre boş bırakılınca korunur
+  const sumS = createCampaign([mk("s1.com", "Sera", "info@s1.com")]);
+  updateCampaignSettings(sumS.id, { name: "Kurumsal", templateId: tpl.id, accountId: sm.id, perHour: 20 });
+  startCampaign(sumS.id);
+  await tickCampaigns();
+  assert.equal(getCampaign(sumS.id)!.status, "completed");
+  const cs = (e: object) => classifySendError(e, "smtp").kind;
+  assert.equal(cs({ code: "EAUTH", responseCode: 535, response: "535 Incorrect authentication data" }), "auth");
+  assert.equal(cs({ responseCode: 553, command: "MAIL FROM", response: "553 Sender address rejected: not owned by user" }), "auth");
+  assert.equal(cs({ responseCode: 550, command: "RCPT TO", response: "550 No such user" }), "recipient");
+  assert.equal(cs({ responseCode: 550, response: "550 Too many emails sent. Hourly limit exceeded" }), "quota");
+  assert.equal(cs({ code: "ETIMEDOUT", message: "timeout" }), "transient");
+  console.log("kurumsal smtp kontrolleri geçti");
+
   console.log("\n✓ tüm kontroller geçti");
 }
 

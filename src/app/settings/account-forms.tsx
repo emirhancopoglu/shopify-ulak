@@ -3,7 +3,7 @@
 import { useActionState, useState, useTransition } from "react";
 import { ui, type FormState } from "@/components/ui";
 import type { AccountView } from "@/lib/accounts";
-import { addAccountAction, deleteAccountAction, updateAccountAction } from "./actions";
+import { addAccountAction, addSmtpAccountAction, deleteAccountAction, updateAccountAction } from "./actions";
 
 const SIGNATURE_PLACEHOLDER = "Ad Soyad\nShopify Geliştirici\nhttps://portfolyo-siteniz.com\nhttps://linkedin.com/in/profiliniz";
 
@@ -83,6 +83,90 @@ export function NewAccountForm({ first }: { first: boolean }) {
   );
 }
 
+export function NewSmtpAccountForm() {
+  const [open, setOpen] = useState(false);
+  const [state, action, pending] = useActionState<FormState, FormData>(async (prev, fd) => {
+    const r = await addSmtpAccountAction(prev, fd);
+    if (r?.ok) setOpen(false);
+    return r;
+  }, null);
+
+  if (!open) {
+    return (
+      <div className="flex items-center gap-3">
+        <button onClick={() => setOpen(true)} className={ui.btn}>
+          + Kurumsal mail (SMTP) ekle
+        </button>
+        {state?.ok && <span className="text-emerald-700">{state.message}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <form action={action} className={`${ui.card} flex flex-col gap-4 p-5`}>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">Kurumsal mail (SMTP) bağla</h3>
+        <button type="button" onClick={() => setOpen(false)} className="text-stone-500 hover:text-stone-900">
+          Vazgeç
+        </button>
+      </div>
+
+      <details className="rounded-md bg-amber-50 px-4 py-3 text-[13px] text-amber-950">
+        <summary className="cursor-pointer font-medium">Bilgileri nereden bulurum?</summary>
+        <p className="mt-2">
+          Hosting firmanızın webmail ya da e-posta paneli, mail hesabı için &quot;SMTP yapılandırması&quot; (giden posta) bilgilerini gösterir: sunucu adı,
+          port ve güvenlik türü. Kullanıcı adı genelde tam mail adresidir; şifre mail hesabının şifresidir. Bilgiler bu bilgisayarda şifrelenmiş
+          olarak saklanır.
+        </p>
+        <p className="mt-2">
+          Kurumsal alan adından toplu gönderim, alan adının itibarını etkileyebilir. Günlük limiti düşük tutun ve hosting panelinde SPF/DKIM kayıtlarının
+          açık olduğundan emin olun.
+        </p>
+      </details>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Mail adresi">
+          <input name="email" type="email" required autoComplete="off" placeholder="info@alanadiniz.com" className={ui.input} />
+        </Field>
+        <Field label="Gönderen adı" hint="Alıcının gelen kutusunda görünen ad">
+          <input name="fromName" required placeholder="Ad Soyad" className={ui.input} />
+        </Field>
+        <Field label="SMTP sunucusu">
+          <input name="host" required autoComplete="off" placeholder="mail.alanadiniz.com" className={ui.input} />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Port">
+            <input name="port" type="number" min={1} max={65535} required defaultValue={465} className={ui.input} />
+          </Field>
+          <Field label="Güvenlik">
+            <select name="security" defaultValue="ssl" className={ui.input}>
+              <option value="ssl">SSL / TLS</option>
+              <option value="starttls">STARTTLS</option>
+            </select>
+          </Field>
+        </div>
+        <Field label="Kullanıcı adı" hint="Genelde tam mail adresi">
+          <input name="user" required autoComplete="off" placeholder="info@alanadiniz.com" className={ui.input} />
+        </Field>
+        <Field label="Mail şifresi">
+          <input name="password" type="password" required autoComplete="new-password" className={`${ui.input} font-mono`} />
+        </Field>
+        <Field label="Günlük limit (24 saat)" hint="Hosting firmasının limitini sorun; bilmiyorsanız düşük başlayın.">
+          <input name="dailyLimit" type="number" min={1} max={2000} defaultValue={100} className={ui.input} />
+        </Field>
+      </div>
+      <SignatureField />
+
+      <div className="flex items-center gap-3">
+        <button disabled={pending} className={ui.btnPrimary}>
+          {pending ? "Sunucuya bağlanılıyor…" : "Bağlan ve kaydet"}
+        </button>
+        {state && <span className={state.ok ? "text-emerald-700" : "text-red-700"}>{state.message}</span>}
+      </div>
+    </form>
+  );
+}
+
 export function AccountCard({ account }: { account: AccountView }) {
   const [editing, setEditing] = useState(false);
   const [state, action, pending] = useActionState<FormState, FormData>(async (prev, fd) => {
@@ -100,6 +184,8 @@ export function AccountCard({ account }: { account: AccountView }) {
           <div className="flex items-center gap-2">
             {account.provider === "outlook" ? (
               <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-semibold text-sky-700">OUTLOOK</span>
+            ) : account.provider === "smtp" ? (
+              <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700">KURUMSAL</span>
             ) : (
               <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-semibold text-red-700">GMAIL</span>
             )}
@@ -112,6 +198,11 @@ export function AccountCard({ account }: { account: AccountView }) {
             </div>
             Son 24 saat: <b className="tabular-nums">{account.sent24h}</b> / {account.dailyLimit}
           </div>
+          {account.smtp && !editing && (
+            <p className="mt-1 text-[13px] text-stone-500">
+              {account.smtp.host}:{account.smtp.port} · {account.smtp.secure ? "SSL/TLS" : "STARTTLS"}
+            </p>
+          )}
           {account.lastError && <p className="mt-2 text-[13px] text-red-700">⚠ {account.lastError}</p>}
         </div>
         {!editing && (
@@ -159,6 +250,30 @@ export function AccountCard({ account }: { account: AccountView }) {
               <Field label="Yeni uygulama şifresi" hint="Değiştirmeyecekseniz boş bırakın">
                 <input name="password" type="password" autoComplete="new-password" className={`${ui.input} font-mono`} />
               </Field>
+            )}
+            {account.provider === "smtp" && account.smtp && (
+              <>
+                <Field label="SMTP sunucusu">
+                  <input name="host" required defaultValue={account.smtp.host} className={ui.input} />
+                </Field>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Port">
+                    <input name="port" type="number" min={1} max={65535} required defaultValue={account.smtp.port} className={ui.input} />
+                  </Field>
+                  <Field label="Güvenlik">
+                    <select name="security" defaultValue={account.smtp.secure ? "ssl" : "starttls"} className={ui.input}>
+                      <option value="ssl">SSL / TLS</option>
+                      <option value="starttls">STARTTLS</option>
+                    </select>
+                  </Field>
+                </div>
+                <Field label="Kullanıcı adı">
+                  <input name="user" required defaultValue={account.smtp.user} className={ui.input} />
+                </Field>
+                <Field label="Yeni şifre" hint="Değiştirmeyecekseniz boş bırakın">
+                  <input name="password" type="password" autoComplete="new-password" className={`${ui.input} font-mono`} />
+                </Field>
+              </>
             )}
           </div>
           <SignatureField defaultValue={account.signature} />
