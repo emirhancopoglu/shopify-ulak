@@ -29,6 +29,13 @@
       "when": 1795133200869,
       "tag": "0003_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795629077998,
+      "tag": "0004_store_findings",
+      "breakpoints": true
     }
   ]
 }

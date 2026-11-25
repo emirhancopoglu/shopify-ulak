@@ -161,6 +161,7 @@ export function StoresTable({
                 <SortTh label="Mağaza" k="brand" filters={filters} href={href} />
                 <th>Durum</th>
                 <th>Mail</th>
+                <th>Eksik</th>
                 <SortTh label="Ülke" k="country" filters={filters} href={href} />
                 <th>Dil</th>
                 <th>Kategori</th>
@@ -208,6 +209,23 @@ export function StoresTable({
                         </div>
                       ) : (
                         <span className="text-stone-400">{r.status === "done" ? "bulunamadı" : "—"}</span>
+                      )}
+                    </td>
+                    <td className="max-w-56">
+                      {r.findings === null ? (
+                        <span className="text-stone-300" title="Bu mağaza eksik kontrollerinden önce analiz edildi">
+                          —
+                        </span>
+                      ) : r.findings.length ? (
+                        <span
+                          className="inline-block max-w-full truncate rounded bg-amber-100 px-1.5 py-0.5 align-middle text-xs font-medium text-amber-800"
+                          title={r.findings.map((f) => f.label).join("\n")}
+                        >
+                          {r.findings[0].label}
+                          {r.findings.length > 1 && ` +${r.findings.length - 1}`}
+                        </span>
+                      ) : (
+                        <span className="text-stone-400">yok</span>
                       )}
                     </td>
                     <td className="whitespace-nowrap">{countryLabel(r.country)}</td>

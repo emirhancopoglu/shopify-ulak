@@ -30,6 +30,13 @@ const EMAIL_OPTIONS = [
   { value: "no", label: "Yok" },
 ];
 
+const FINDING_OPTIONS = [
+  { value: "", label: "Tümü" },
+  { value: "yes", label: "Eksik var" },
+  { value: "no", label: "Eksik yok" },
+  { value: "unanalyzed", label: "Eski analiz (yenile)" },
+];
+
 const CONTACTED_OPTIONS = [
   { value: "", label: "Tümü" },
   { value: "no", label: "Henüz atılmadı" },
@@ -180,6 +187,12 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
           value={filters.contacted ?? ""}
           options={CONTACTED_OPTIONS}
           onChange={(v) => apply({ contacted: (v || undefined) as StoreFilters["contacted"] })}
+        />
+        <Select
+          label="Eksik"
+          value={filters.findings ?? ""}
+          options={FINDING_OPTIONS}
+          onChange={(v) => apply({ findings: (v || undefined) as StoreFilters["findings"] })}
         />
         <Select label="TR puanı" value={filters.minTr?.toString() ?? ""} options={TR_OPTIONS} onChange={(v) => apply({ minTr: v ? Number(v) : undefined })} />
         <Select

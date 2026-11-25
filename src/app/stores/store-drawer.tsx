@@ -103,6 +103,23 @@ export function StoreDrawer({
             </Section>
           )}
 
+          <Section title="Mağaza eksikleri">
+            {store.findings === null ? (
+              <Empty>Bu mağaza eksik kontrollerinden önce analiz edildi. Yeniden analiz edince görünür.</Empty>
+            ) : store.findings.length ? (
+              <ul className="flex flex-col gap-2.5">
+                {store.findings.map((f) => (
+                  <li key={f.key}>
+                    <p className="font-medium text-stone-800">{f.label}</p>
+                    <p className="text-[13px] leading-relaxed text-stone-500">{f.detail}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty>Tespit edilen eksik yok.</Empty>
+            )}
+          </Section>
+
           <Section title="Uygulamalar">
             {store.apps?.length ? (
               <div className="flex flex-wrap gap-1.5">

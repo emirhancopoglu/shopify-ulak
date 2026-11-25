@@ -228,6 +228,10 @@ export function buildWhere(f: StoreFilters): SQL | undefined {
   if (f.email === "no") conds.push(sql`NOT ${HAS_EMAIL}`);
   if (f.contacted === "yes") conds.push(WAS_CONTACTED);
   if (f.contacted === "no") conds.push(sql`NOT ${WAS_CONTACTED}`);
+  // Eksik kontrolleri: "yok" ve "var" yalnızca analiz edilmiş mağazalara uygulanır (findings NULL = eski analiz)
+  if (f.findings === "yes") conds.push(sql`json_array_length(stores.findings) > 0`);
+  if (f.findings === "no") conds.push(sql`json_array_length(stores.findings) = 0`);
+  if (f.findings === "unanalyzed") conds.push(sql`stores.findings IS NULL AND stores.status = 'done'`);
   if (f.minProducts !== undefined) conds.push(gte(stores.productCount, f.minProducts));
   if (f.maxProducts !== undefined) conds.push(lte(stores.productCount, f.maxProducts));
   if (f.minTr !== undefined) conds.push(gte(stores.trScore, f.minTr));

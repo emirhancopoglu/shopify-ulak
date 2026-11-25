@@ -16,6 +16,11 @@ export const VARIABLES: { key: string; label: string; example: string }[] = [
   { key: "ulke", label: "Ülke", example: "Türkiye" },
   { key: "imza", label: "İmza (hesaptan)", example: "Ad Soyad\nShopify Geliştirici" },
   { key: "gonderen", label: "Gönderen adı", example: "Ad Soyad" },
+  {
+    key: "bulgu",
+    label: "Mağaza eksiği (boşsa gizlenir)",
+    example: "Sitenizin menüsünde açılmayan bağlantılar var; ziyaretçiler bu sayfalara ulaşamıyor olabilir. Bunların çoğu mevcut temanızı değiştirmeden düzeltilebilir.",
+  },
 ];
 
 const TOKEN_RE = /\{\{\s*([a-z_çğıöşü0-9]+)\s*(?:\|([^}]*))?\}\}/gi;
@@ -111,6 +116,110 @@ Sıfırdan tema geliştirmek yerine, mevcut temanız üzerinden ihtiyaçlarını
 --
 Bu tür e-postaları almak istemiyorsanız "çıkar" yazarak yanıtlamanız yeterli.`,
 };
+
+/**
+ * Hazır düz metin şablonları. Kurallar: kişisel ton, bağlantı yok, görsel yok, "çıkar" opt-out satırı var.
+ * Mağazaya özel bulgu (eksik, hata vb.) içermezler; sadece genel, kısa tanıtım yaparlar.
+ */
+export const STARTER_TEMPLATES: { name: string; format: "text"; subject: string; bodyText: string; bodyHtml: null }[] = [
+  {
+    name: "Kısa tanışma",
+    format: "text",
+    subject: "{{site}} hakkında kısa bir not",
+    bodyText: `Merhaba {{marka}} ekibi,
+
+{{site}} sitenize baktım. Ben Shopify mağazaları üzerinde çalışan bir geliştiriciyim. Mevcut temanızı değiştirmeden ürün sayfası, filtreleme ve mobil görünüm gibi bölümlerde küçük ama işe yarar düzenlemeler yapıyorum.
+
+Sitenizde gözüme çarpan bir şey olursa bunu size kısaca yazabilirim. Yalnızca ilginizi çekerse yanıtlamanız yeterli.
+
+{{imza}}
+
+--
+Bu tür mesajları almak istemiyorsanız "çıkar" yazmanız yeterli.`,
+    bodyHtml: null,
+  },
+  {
+    name: "Mağaza önerisi",
+    format: "text",
+    subject: "{{marka}} mağazası için küçük bir öneri",
+    bodyText: `Merhaba {{marka}} ekibi,
+
+{{site}} mağazanızı inceledim. Birçok Shopify mağazasında ürün sayfası ve mobil deneyimde satışı etkileyebilecek küçük noktalar oluyor. Bunları mevcut temanız üzerinden düzeltmek, sıfırdan tema yapmaktan çok daha kısa sürer.
+
+Mağazanız için öncelikli gördüğünüz bir konu varsa yanıtlamanız yeterli. Kısa bir değerlendirme yazıp size dönebilirim.
+
+İyi çalışmalar.
+
+{{imza}}
+
+--
+Bu tür mesajları almak istemiyorsanız "çıkar" yazmanız yeterli.`,
+    bodyHtml: null,
+  },
+  {
+    name: "Kısa soru",
+    format: "text",
+    subject: "{{site}} için kısa bir soru",
+    bodyText: `Merhaba,
+
+{{site}} için Shopify tarafında yardımcı olabileceğim bir konu olabilir. Mevcut temanızı koruyarak ihtiyaç duyduğunuz özelliği ya da düzenlemeyi yapabiliyorum.
+
+İlgilenirseniz "evet" yazmanız yeterli, ayrıntıyı birlikte konuşalım.
+
+{{imza}}
+
+--
+Bu tür mesajları almak istemiyorsanız "çıkar" yazmanız yeterli.`,
+    bodyHtml: null,
+  },
+];
+
+/**
+ * Mağaza eksiğini ({{bulgu}}) kullanan şablonlar. Bulgu yoksa {{bulgu|Sitenizi inceledim.}} varsayılanı çıkar.
+ * Bulgu olmayan mağazalara bunları göndermemek kullanıcının sorumluluğundadır (kampanya öncesi Mağazalar'dan filtreleyin).
+ */
+export const STARTER_TEMPLATES_V2: typeof STARTER_TEMPLATES = [
+  {
+    name: "Eksik odaklı tanışma",
+    format: "text",
+    subject: "{{site}} için bir not",
+    bodyText: `Merhaba {{marka}} ekibi,
+
+{{bulgu|Sitenizi inceledim.}}
+
+Ben Shopify mağazalarında çalışan bir geliştiriciyim. Yaptığım düzenlemeler genelde mevcut temanın üzerinde kalır, bu yüzden süreç kısa sürer.
+
+İlginizi çekerse yanıtlamanız yeterli.
+
+{{imza}}
+
+--
+Bu tür mesajları almak istemiyorsanız "çıkar" yazmanız yeterli.`,
+    bodyHtml: null,
+  },
+  {
+    name: "Eksik odaklı kısa not",
+    format: "text",
+    subject: "{{site}} için tek bir öneri",
+    bodyText: `Merhaba {{marka}} ekibi,
+
+{{bulgu|Sitenizi inceledim.}}
+
+Yanıtlamanız yeterli, ayrıntıyı kısaca paylaşabilirim.
+
+{{imza}}
+
+--
+Bu tür mesajları almak istemiyorsanız "çıkar" yazmanız yeterli.`,
+    bodyHtml: null,
+  },
+];
+
+/** Hazır şablon paketleri. Her paket bir kez eklenir (flag ayarı); kullanıcı silerse geri gelmez. */
+export const STARTER_BATCHES: { flag: string; templates: typeof STARTER_TEMPLATES }[] = [
+  { flag: "starter_templates_v1", templates: STARTER_TEMPLATES },
+  { flag: "starter_templates_v2", templates: STARTER_TEMPLATES_V2 },
+];
 
 /** HTML biçimine geçildiğinde editöre konan sade başlangıç iskeleti. */
 export const HTML_STARTER = `<div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; color: #222; max-width: 600px;">

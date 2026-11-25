@@ -10,6 +10,9 @@ import {
 
 const now = sql`(unixepoch() * 1000)`;
 
+/** Mağaza eksiği (analizör bulgusu). Şema bağımsız tutmak için analizörden kopyalanmış tip. */
+export type StoreFinding = { key: string; label: string; detail: string; sentence: string };
+
 export const STORE_STATUSES = [
   "pending", // sırada, henüz analiz edilmedi
   "analyzing",
@@ -49,6 +52,8 @@ export const stores = sqliteTable(
     themeName: text("theme_name"),
     apps: text("apps", { mode: "json" }).$type<string[]>(),
     socials: text("socials", { mode: "json" }).$type<Record<string, string>>(),
+    /** Öncelik sıralı mağaza eksikleri (analizör üretir). null = bu özellikten önce analiz edilmiş. */
+    findings: text("findings", { mode: "json" }).$type<StoreFinding[]>(),
     trScore: integer("tr_score").notNull().default(0),
 
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),

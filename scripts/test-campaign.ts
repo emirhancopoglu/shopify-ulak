@@ -8,7 +8,9 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { eq } from "drizzle-orm";
 import { db, schema, DB_PATH } from "../src/db";
 import { createGmailAccount, getAccount, sentInLast24h } from "../src/lib/accounts";
-import { createCampaign, getCampaign, previewRecipient, startCampaign, tickCampaigns, updateCampaignSettings, retryFailed, listRecipients } from "../src/lib/campaigns";
+import { createCampaign, getCampaign, previewRecipient, startCampaign, storeVars, tickCampaigns, updateCampaignSettings, retryFailed, listRecipients } from "../src/lib/campaigns";
+import { queryStores } from "../src/lib/stores";
+import { DEFAULT_FILTERS, parseFilters, serializeFilters, type StoreFilters } from "../src/lib/store-filters";
 import { isSuppressed, suppress } from "../src/lib/suppression";
 import { listTemplates } from "../src/lib/template-store";
 
@@ -41,7 +43,7 @@ async function main() {
 
   // --- Ayarlar ve başlatma doğrulamaları
   assert.throws(() => startCampaign(sum.id), /şablon/);
-  const tpl = listTemplates()[0]; // varsayılan şablon otomatik oluşur
+  const tpl = listTemplates().find((t) => t.name === "Shopify geliştirme – tanıtım")!; // varsayılan şablon otomatik oluşur
   const acc = await createGmailAccount({ email: "ben@gmail.com", fromName: "Ad Soyad", password: "abcd efgh ijkl mnop", dailyLimit: 3, signature: "Ad Soyad\nShopify Geliştirici\nhttps://portfolyo.dev" });
   updateCampaignSettings(sum.id, { name: "Test", templateId: tpl.id, accountId: acc.id, perHour: 200 });
 
@@ -232,6 +234,75 @@ async function main() {
   assert.deepEqual(imapSettingsFor(decodedNoImap), { host: "smtp.firma.com.tr", port: 993, secure: true });
   assert.deepEqual(imapSettingsFor({ ...decodedNoImap, imap: { host: "imap.firma.com.tr", port: 143, secure: false } }), { host: "imap.firma.com.tr", port: 143, secure: false });
   console.log("gönderilenler kopyası kontrolleri geçti");
+
+  // --- Hazır şablonlar: her biri render edilir, eksik değişken yok, opt-out var, bağlantı yok
+  const { STARTER_BATCHES, renderEmail: render } = await import("../src/lib/template");
+  const { ensureStarterTemplates } = await import("../src/lib/template-store");
+  const allStarters = STARTER_BATCHES.flatMap((b) => b.templates);
+  const sample = { marka: "Ornek Butik", site: "ornekbutik.com", imza: "Ad Soyad\nShopify Geliştirici", bulgu: "Sitenizin menüsünde açılmayan bağlantılar var." };
+  for (const st of allStarters) {
+    const out = render({ format: "text", subject: st.subject, bodyText: st.bodyText, bodyHtml: null }, sample);
+    assert.deepEqual(out.missing, [], `${st.name}: eksik değişken`);
+    assert.ok(out.subject.length > 0 && out.subject.length <= 70, `${st.name}: konu uzunluğu`);
+    assert.match(out.text, /"çıkar" yazmanız yeterli/, `${st.name}: opt-out satırı yok`);
+    assert.doesNotMatch(out.text + out.subject, /https?:\/\/|www\./i, `${st.name}: bağlantı içermemeli`);
+  }
+  // Bulgu yoksa varsayılan cümle kullanılır, eksik değişken sayılmaz
+  const noFinding = render(
+    { format: "text", subject: allStarters[3].subject, bodyText: allStarters[3].bodyText, bodyHtml: null },
+    { ...sample, bulgu: "" },
+  );
+  assert.deepEqual(noFinding.missing, []);
+  assert.match(noFinding.text, /Sitenizi inceledim\./);
+  assert.match(render({ format: "text", subject: "x", bodyText: "{{bulgu|Sitenizi inceledim.}}", bodyHtml: null }, sample).text, /menüsünde açılmayan/);
+
+  const names = listTemplates().map((t) => t.name);
+  for (const st of allStarters) assert.equal(names.filter((n) => n === st.name).length, 1, `${st.name}: bir kez eklenmeli`);
+  assert.ok(names.includes("Eksik odaklı tanışma"), "bulgu şablonları eklenmeli");
+  // Kullanıcı silince tekrar eklenmemeli
+  const { deleteTemplate } = await import("../src/lib/template-store");
+  const kisa = listTemplates().find((t) => t.name === "Kısa tanışma")!;
+  deleteTemplate(kisa.id);
+  ensureStarterTemplates();
+  assert.equal(listTemplates().filter((t) => t.name === "Kısa tanışma").length, 0, "silinen hazır şablon geri gelmemeli");
+  console.log("hazır şablon kontrolleri geçti");
+
+  // --- Mağaza eksiği (bulgu) değişkeni: DB'den okunur, şablona doğru yansır
+  const withFinding = db
+    .insert(s.stores)
+    .values({
+      domain: "bulgu.com",
+      brandName: "Bulgu Butik",
+      status: "done",
+      findings: [
+        { key: "broken_links", label: "1 kırık menü bağlantısı", detail: "Açılmayan sayfalar: /pages/kayip", sentence: "Sitenizin menüsünde açılmayan bağlantılar var." },
+        { key: "no_contact", label: "İletişim sayfası yok", detail: "x", sentence: "Sitenizde iletişim sayfası görünmüyor." },
+      ],
+    })
+    .returning()
+    .get();
+  const vf = storeVars(withFinding);
+  assert.match(vf.bulgu, /^Sitenizin menüsünde açılmayan bağlantılar var\. Bunların çoğu mevcut temanızı/, "en öncelikli bulgu kullanılmalı");
+  const withoutFinding = db.insert(s.stores).values({ domain: "temiz.com", status: "done", findings: [] }).returning().get();
+  assert.equal(storeVars(withoutFinding).bulgu, "", "bulgu yoksa değişken boş olmalı");
+  const legacy = db.insert(s.stores).values({ domain: "eski-analiz.com", status: "done" }).returning().get();
+  assert.equal(storeVars(legacy).bulgu, "", "eski analizde (findings null) değişken boş olmalı");
+  console.log("mağaza eksiği değişkeni kontrolleri geçti");
+
+  // --- Eksik filtresi: URL (de)serileştirme ve sorgu
+  assert.equal(parseFilters(new URLSearchParams("bulgu=yes")).findings, "yes");
+  assert.equal(parseFilters(new URLSearchParams("bulgu=bilinmez")).findings, undefined, "geçersiz değer yok sayılmalı");
+  assert.equal(serializeFilters({ ...DEFAULT_FILTERS, findings: "unanalyzed" }).get("bulgu"), "unanalyzed");
+  const domainsFor = (findings: StoreFilters["findings"]) =>
+    queryStores({ ...DEFAULT_FILTERS, pageSize: 1000, findings }).rows.map((r) => r.domain);
+  const yes = domainsFor("yes");
+  const no = domainsFor("no");
+  const unanalyzed = domainsFor("unanalyzed");
+  assert.ok(yes.includes("bulgu.com") && !yes.includes("temiz.com") && !yes.includes("eski-analiz.com"), "var: yalnız bulgulu mağaza");
+  assert.ok(no.includes("temiz.com") && !no.includes("bulgu.com") && !no.includes("eski-analiz.com"), "yok: yalnız bulgusuz analiz edilmiş mağaza");
+  assert.ok(unanalyzed.includes("eski-analiz.com") && !unanalyzed.includes("bulgu.com") && !unanalyzed.includes("temiz.com"), "eski analiz: findings NULL ve done");
+  assert.equal(domainsFor(undefined).length, queryStores({ ...DEFAULT_FILTERS, pageSize: 1000 }).rows.length);
+  console.log("eksik filtresi kontrolleri geçti");
 
   console.log("\n✓ tüm kontroller geçti");
 }
