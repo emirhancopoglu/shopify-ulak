@@ -131,6 +131,7 @@ export async function sendEmail(account: Account, mail: OutgoingEmail): Promise<
 export type SendErrorKind =
   | "auth" // giriş başarısız: kampanyayı durdur
   | "quota" // sağlayıcı limiti / hesap engeli: kampanyayı durdur
+  | "policy" // içerik / güvenlik politikası engeli (örn. DATA 550 5.7.1): tekrar deneme, kampanyayı durdur
   | "recipient" // alıcı adresi kalıcı reddedildi: alıcıyı başarısız say, kara listeye al
   | "transient"; // geçici: sonra tekrar dene
 
@@ -188,6 +189,20 @@ export function classifySendError(err: unknown, provider: Account["provider"] = 
   }
   if (e.responseCode && e.responseCode >= 550 && e.command === "RCPT TO") {
     return { kind: "recipient", message: `Alıcı reddedildi: ${(e.response ?? e.message ?? "").slice(0, 200)}` };
+  }
+  // İçerik / güvenlik politikası engeli (örn. DATA aşamasında 550 5.7.1): tekrar denemek işe yaramaz
+  if (
+    e.responseCode &&
+    e.responseCode >= 550 &&
+    (e.command === "DATA" ||
+      /\b5\.7\.1\b|blocked due to security|security reason|policy|rejected as spam|content rejected|message (is )?blocked|message rejected/i.test(text))
+  ) {
+    return {
+      kind: "policy",
+      message: withRaw(
+        `${name} bu mesajı güvenlik/içerik politikası nedeniyle engelledi. İçeriği ve SPF/DKIM/DMARC kayıtlarını kontrol etmeden devam etmeyin.`,
+      ),
+    };
   }
   return { kind: "transient", message: (e.response ?? e.message ?? String(err)).slice(0, 300) };
 }

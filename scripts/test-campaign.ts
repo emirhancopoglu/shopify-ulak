@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { db, schema, DB_PATH } from "../src/db";
 import { createGmailAccount, sentInLast24h } from "../src/lib/accounts";
 import { createCampaign, getCampaign, previewRecipient, startCampaign, tickCampaigns, updateCampaignSettings, retryFailed, listRecipients } from "../src/lib/campaigns";
-import { suppress } from "../src/lib/suppression";
+import { isSuppressed, suppress } from "../src/lib/suppression";
 import { listTemplates } from "../src/lib/template-store";
 
 async function main() {
@@ -163,8 +163,38 @@ async function main() {
   assert.equal(cs({ responseCode: 553, command: "MAIL FROM", response: "553 Sender address rejected: not owned by user" }), "auth");
   assert.equal(cs({ responseCode: 550, command: "RCPT TO", response: "550 No such user" }), "recipient");
   assert.equal(cs({ responseCode: 550, response: "550 Too many emails sent. Hourly limit exceeded" }), "quota");
+  assert.equal(cs({ responseCode: 550, command: "DATA", response: "550 5.7.1 This message is blocked due to security reason" }), "policy");
+  assert.equal(cs({ responseCode: 554, response: "554 5.7.1 Message rejected as spam" }), "policy");
   assert.equal(cs({ code: "ETIMEDOUT", message: "timeout" }), "transient");
   console.log("kurumsal smtp kontrolleri geçti");
+
+  // --- Policy (550 5.7.1 DATA) davranışı: tekrar deneme yok, kara liste yok, kampanya duraklar
+  const sumP = createCampaign([mk("p1.com", "P1", "info@p1.com"), mk("p2.com", "P2", "info@p2.com")]);
+  updateCampaignSettings(sumP.id, { name: "Policy testi", templateId: tpl.id, accountId: sm.id, perHour: 20 });
+  startCampaign(sumP.id);
+  let sendCalls = 0;
+  const failWithPolicy = async () => {
+    sendCalls++;
+    throw Object.assign(new Error("Message failed: 550 5.7.1 This message is blocked due to security reason"), {
+      responseCode: 550,
+      command: "DATA",
+      response: "550 5.7.1 This message is blocked due to security reason",
+    });
+  };
+  await tickCampaigns(Date.now(), failWithPolicy);
+  await tickCampaigns(Date.now() + 120_000, failWithPolicy); // durakladığı için tekrar çalışmamalı
+  const cp = getCampaign(sumP.id)!;
+  assert.equal(sendCalls, 1);
+  assert.equal(cp.status, "paused");
+  assert.match(cp.statusReason!, /güvenlik\/içerik politikası/);
+  const pRows = listRecipients(sumP.id).rows;
+  const p1 = pRows.find((r) => r.email === "info@p1.com")!;
+  const p2 = pRows.find((r) => r.email === "info@p2.com")!;
+  assert.equal(p1.status, "failed");
+  assert.equal(p1.attempts, 1);
+  assert.equal(p2.status, "queued");
+  assert.equal(isSuppressed("info@p1.com"), false);
+  console.log("policy kontrolleri geçti");
 
   console.log("\n✓ tüm kontroller geçti");
 }
