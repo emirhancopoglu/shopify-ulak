@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { ImapFlow } from "imapflow";
 import type { Account } from "@/db/schema";
 import { OutlookAuthError, outlookAccessToken } from "@/lib/outlook";
 import { decrypt, encrypt } from "@/lib/secret";
@@ -25,15 +26,21 @@ export const PROVIDER_LABEL: Record<Account["provider"], string> = { gmail: "Gma
  * Kurumsal (genel) SMTP hesabı: hosting firmasının verdiği sunucu bilgileri.
  * secure=true → doğrudan SSL/TLS (genelde 465); false → STARTTLS (genelde 587).
  */
-export type SmtpConfig = { host: string; port: number; secure: boolean; user: string; password: string };
+export type ImapSettings = { host: string; port: number; secure: boolean };
+/** Opsiyonel IMAP ayarı. Yoksa SMTP sunucusu, 993 port ve SSL varsayılır (hosting'lerde genellikle aynı host). */
+export type SmtpConfig = { host: string; port: number; secure: boolean; user: string; password: string; imap?: ImapSettings };
 
 export const encodeSmtpSecret = (cfg: SmtpConfig) => encrypt(JSON.stringify(cfg));
 
 export function decodeSmtpSecret(secret: string): SmtpConfig {
   const cfg = JSON.parse(decrypt(secret)) as Partial<SmtpConfig>;
   if (!cfg.host || !cfg.port || !cfg.user || !cfg.password) throw new Error("Kurumsal SMTP hesabının bilgileri okunamadı; hesabı silip yeniden ekleyin.");
-  return { host: cfg.host, port: cfg.port, secure: Boolean(cfg.secure), user: cfg.user, password: cfg.password };
+  const imap = cfg.imap?.host ? { host: cfg.imap.host, port: cfg.imap.port || 993, secure: cfg.imap.secure !== false } : undefined;
+  return { host: cfg.host, port: cfg.port, secure: Boolean(cfg.secure), user: cfg.user, password: cfg.password, ...(imap ? { imap } : {}) };
 }
+
+/** Gönderilenler kopyası için kullanılacak IMAP ayarı. */
+export const imapSettingsFor = (cfg: SmtpConfig): ImapSettings => cfg.imap ?? { host: cfg.host, port: 993, secure: true };
 
 export function smtpTransport(cfg: SmtpConfig) {
   return nodemailer.createTransport({
@@ -110,18 +117,79 @@ export async function verifyOutlook(email: string, accessToken: string) {
 
 export type OutgoingEmail = { to: string; subject: string; text: string; html: string | null };
 
-export async function sendEmail(account: Account, mail: OutgoingEmail): Promise<{ messageId: string }> {
-  const t = await transportFor(account);
+/** Gönderilenler kopyasını IMAP ile yazar. Verilirse sendEmail bunu kullanır (test için enjekte edilebilir). */
+export type AppendSentFn = (cfg: SmtpConfig, raw: Buffer) => Promise<unknown>;
+
+const SENT_FOLDER_NAMES = ["sent", "sent items", "sent messages", "gönderilmiş", "gönderilenler", "gönderilmiş öğeler", "inbox.sent", "[gmail]/sent mail"];
+
+/** Gönderilenler klasörüne mesajın bir kopyasını ekler. Klasörü önce SPECIAL-USE (\Sent), sonra bilinen adlarla bulur. */
+export async function appendToSentFolder(cfg: SmtpConfig, raw: Buffer): Promise<string> {
+  const imap = imapSettingsFor(cfg);
+  const client = new ImapFlow({
+    host: imap.host,
+    port: imap.port,
+    secure: imap.secure,
+    auth: { user: cfg.user, pass: cfg.password },
+    tls: { rejectUnauthorized: true },
+    logger: false,
+    disableAutoIdle: true,
+    ...TIMEOUTS,
+  });
+  await client.connect();
   try {
-    const info = await t.sendMail({
+    const folders = await client.list();
+    const sent =
+      folders.find((f) => f.specialUse === "\\Sent") ?? folders.find((f) => SENT_FOLDER_NAMES.includes(f.path.toLowerCase()));
+    if (!sent) throw new Error("IMAP'te Gönderilmiş klasörü bulunamadı.");
+    await client.append(sent.path, raw, ["\\Seen"]);
+    return sent.path;
+  } finally {
+    await client.logout().catch(() => client.close());
+  }
+}
+
+/** SMTP ile gönderilen mesajın birebir aynı içeriğini (Message-ID dahil) ham MIME olarak üretir. */
+async function buildRawMessage(opts: Record<string, unknown>): Promise<Buffer> {
+  // IMAP APPEND literal'i CRLF satır sonu bekler (RFC 3501)
+  const composer = nodemailer.createTransport({ streamTransport: true, buffer: true, newline: "windows" });
+  const info = await composer.sendMail(opts);
+  return info.message as Buffer;
+}
+
+export async function sendEmail(
+  account: Account,
+  mail: OutgoingEmail,
+  deps: { appendSent?: AppendSentFn | null } = {},
+): Promise<{ messageId: string }> {
+  const t = await transportFor(account);
+  // Kurumsal SMTP'de gönderilenler klasörüne kopya yazılmaz; IMAP APPEND ile eklenir.
+  // Kuru modda (MAIL_TRANSPORT=json) gerçek IMAP'a bağlanılmaz.
+  const appendSent: AppendSentFn | null =
+    deps.appendSent !== undefined ? deps.appendSent : DRY_RUN ? null : appendToSentFolder;
+  try {
+    // Date'i biz veriyoruz ki SMTP'de giden ve IMAP'a yazılan kopya aynı tarihi taşısın
+    const mailOpts = {
       from: { name: account.fromName, address: account.email },
       to: mail.to,
       subject: mail.subject,
       text: mail.text,
+      date: new Date(),
       ...(mail.html ? { html: mail.html } : {}),
       // Gmail/Outlook "abonelikten çık" bağlantısını bu başlıktan gösterir
       ...(listUnsubscribeEnabled() ? { headers: { "List-Unsubscribe": `<mailto:${account.email}?subject=unsubscribe>` } } : {}),
-    });
+    };
+    const info = await t.sendMail(mailOpts);
+
+    if (account.provider === "smtp" && appendSent) {
+      // Gönderim başarılı. Kopyanın hatası gönderimi bozmamalı, sadece loglanır.
+      try {
+        const cfg = decodeSmtpSecret(account.secret);
+        const raw = await buildRawMessage({ ...mailOpts, messageId: info.messageId });
+        await appendSent(cfg, raw);
+      } catch (err) {
+        console.warn(`[imap] ${account.email} gönderilenler kopyası eklenemedi: ${(err as Error).message}`);
+      }
+    }
     return { messageId: info.messageId };
   } finally {
     t.close();
