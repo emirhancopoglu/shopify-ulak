@@ -11,6 +11,8 @@ import { runDiscovery } from "../src/lib/discovery/runner";
 import { runStoreAnalysis } from "../src/lib/stores";
 
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 6);
+/** Keşif çalıştırmaları saatlerce sürer (bekleme dahil); analiz yuvalarını işgal etmesinler diye ayrı sınır. */
+const DISCOVERY_SLOTS = 8;
 const POLL_MS = 1000;
 const SEND_TICK_MS = 2000;
 
@@ -20,10 +22,11 @@ const handlers: Record<string, (payload: never) => Promise<void>> = {
 };
 
 const active = new Set<Promise<void>>();
+const discovering = new Set<Promise<void>>();
 let sending: Promise<void> | null = null;
 let stopping = false;
 
-function run(job: ClaimedJob) {
+function run(job: ClaimedJob, pool: Set<Promise<void>>) {
   const handler = handlers[job.type];
   const p = (async () => {
     try {
@@ -35,8 +38,8 @@ function run(job: ClaimedJob) {
       console.error(`iş #${job.id} (${job.type}) hata: ${msg}`);
       failJob(job.id, job.attempts, msg);
     }
-  })().finally(() => active.delete(p));
-  active.add(p);
+  })().finally(() => pool.delete(p));
+  pool.add(p);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -46,7 +49,8 @@ async function jobLoop() {
   while (!stopping) {
     try {
       writeHeartbeat();
-      for (const job of claimJobs(CONCURRENCY - active.size)) run(job);
+      for (const job of claimJobs(CONCURRENCY - active.size, "analyze_store")) run(job, active);
+      for (const job of claimJobs(DISCOVERY_SLOTS - discovering.size, "discover")) run(job, discovering);
       if (Date.now() - lastPrune > 3600_000) {
         pruneJobs();
         lastPrune = Date.now();
@@ -70,8 +74,8 @@ async function sendLoop() {
 async function shutdown() {
   if (stopping) return;
   stopping = true;
-  console.log(`kapanıyor; ${active.size} iş${sending ? " ve süren gönderim" : ""} bekleniyor…`);
-  await Promise.race([Promise.allSettled([...active, sending]), sleep(15_000)]);
+  console.log(`kapanıyor; ${active.size + discovering.size} iş${sending ? " ve süren gönderim" : ""} bekleniyor…`);
+  await Promise.race([Promise.allSettled([...active, ...discovering, sending]), sleep(15_000)]);
   requeueRunning();
   process.exit(0);
 }

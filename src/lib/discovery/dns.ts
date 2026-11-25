@@ -8,9 +8,12 @@ import { promises as dns } from "node:dns";
 const SHOPIFY_IP = /^23\.227\.38\./;
 const SHOPIFY_CNAME = /(^|\.)myshopify\.com\.?$/i;
 
+// Yüz binlerce alan adı taranırken yanıt vermeyen sunucular taramayı kilitlemesin
+const resolver = new dns.Resolver({ timeout: 2500, tries: 2 });
+
 async function aRecords(host: string): Promise<string[]> {
   try {
-    return await dns.resolve4(host);
+    return await resolver.resolve4(host);
   } catch {
     return [];
   }
@@ -18,7 +21,7 @@ async function aRecords(host: string): Promise<string[]> {
 
 async function cname(host: string): Promise<string[]> {
   try {
-    return await dns.resolveCname(host);
+    return await resolver.resolveCname(host);
   } catch {
     return [];
   }

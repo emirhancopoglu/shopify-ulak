@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { DiscoveryRun, DiscoverySource, DiscoveryStats, DiscoveryStatus } from "@/db/schema";
 import { enqueue } from "@/lib/jobs";
@@ -25,8 +25,12 @@ export function listRuns(limit = 30): DiscoveryRun[] {
   return db.select().from(runs).orderBy(desc(runs.id)).limit(limit).all();
 }
 
-export function hasActiveRun(): boolean {
-  return Boolean(db.select({ id: runs.id }).from(runs).where(inArray(runs.status, ["queued", "running"])).get());
+const ACTIVE = inArray(runs.status, ["queued", "running"]);
+
+/** Kaynak başına tek aktif çalıştırma (aynı kaynağa paralel istek atıp engel yememek için); kaynaklar birbirini beklemez. */
+export function hasActiveRun(source?: DiscoverySource): boolean {
+  const where = source ? and(ACTIVE, eq(runs.source, source)) : ACTIVE;
+  return Boolean(db.select({ id: runs.id }).from(runs).where(where).get());
 }
 
 export function setRunStatus(id: number, status: DiscoveryStatus, error: string | null = null) {
@@ -73,8 +77,11 @@ export function cancelRun(id: number) {
 export function resumeRun(id: number) {
   const run = getRun(id);
   if (!run || !["blocked", "failed", "cancelled"].includes(run.status)) return false;
-  if (run.stats.cursor >= run.stats.total) return false;
-  db.update(runs).set({ status: "queued", error: null, finishedAt: null }).where(eq(runs.id, id)).run();
+  // total 0: liste henüz indirilmeden yarıda kalmış (alan adı arşivi), yine sürdürülebilir
+  if (run.stats.total > 0 && run.stats.cursor >= run.stats.total) return false;
+  // Elle devam: otomatik bekleme ve engel sayacı sıfırdan başlar
+  const stats = { ...run.stats, waitUntil: null, waitReason: null, blockStreak: 0 };
+  db.update(runs).set({ status: "queued", error: null, finishedAt: null, stats }).where(eq(runs.id, id)).run();
   enqueue("discover", [{ runId: id }]);
   return true;
 }

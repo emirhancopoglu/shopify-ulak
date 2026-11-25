@@ -12,17 +12,17 @@ export function enqueue<T extends JobType>(type: T, payloads: JobPayloads[T][]) 
     .run();
 }
 
-/** Sıradaki işleri atomik olarak "running" yapar ve döndürür. */
-export function claimJobs(limit: number): ClaimedJob[] {
+/** Sıradaki işleri (verilen türden) atomik olarak "running" yapar ve döndürür. */
+export function claimJobs(limit: number, type: JobType): ClaimedJob[] {
   if (limit <= 0) return [];
   const now = Date.now();
   const rows = db.$client
     .prepare(
       `UPDATE jobs SET status = 'running', attempts = attempts + 1, updated_at = ?
-       WHERE id IN (SELECT id FROM jobs WHERE status = 'queued' AND run_after <= ? ORDER BY id LIMIT ?)
+       WHERE id IN (SELECT id FROM jobs WHERE status = 'queued' AND type = ? AND run_after <= ? ORDER BY id LIMIT ?)
        RETURNING id, type, payload, attempts`,
     )
-    .all(now, now, limit) as { id: number; type: string; payload: string; attempts: number }[];
+    .all(now, type, now, limit) as { id: number; type: string; payload: string; attempts: number }[];
   return rows.map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
 }
 

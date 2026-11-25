@@ -66,8 +66,8 @@ src/lib/campaign-labels.ts client-safe status labels
 src/app/stores/           Stores screen: page (server), filters-bar, stores-table, store-drawer, actions, export/route.ts (CSV)
 src/app/templates/        list + [id] editor (live preview, variable chips, content hints, test send)
 src/app/campaigns/        list + [id] detail (settings, start/pause/stop, progress, ETA, countdown, preview, recipients)
-src/lib/discovery/        F4 discovery: probe.ts (meta.json → shopify/TR/primary domain), ddg.ts (DuckDuckGo HTML + query builder + default TR keywords), commoncrawl.ts (CDX with retries), dns.ts (Shopify IP/CNAME), runs.ts (discovery_runs CRUD), runner.ts (resumable runs, ingest pipeline)
-src/app/discover/         discovery screen: 3 source forms + run cards (progress, stats, log, cancel/resume)
+src/lib/discovery/        F4 discovery: probe.ts (meta.json → shopify/TR/primary domain), ddg.ts (DuckDuckGo HTML + query builder + default TR keywords), commoncrawl.ts (CDX with retries), dns.ts (Shopify IP/CNAME, resolver with timeout), domainlist.ts (Common Crawl web-graph domain list → .tr, streamed with Range resume, cached in data/discovery/), tranco.ts (top-1M list, cached), wayback.ts (Wayback CDX *.myshopify.com pages), runs.ts (discovery_runs CRUD), runner.ts (resumable runs, ingest pipeline, shared dnsSweep, injectable RunnerDeps for tests)
+src/app/discover/         discovery screen: 6 source forms + run cards (progress, stats, note, wait, log, cancel/resume)
 src/app/settings/         Gmail accounts (app password + signature), corporate SMTP accounts, Outlook setup + connect/reconnect, suppression list
 src/components/           nav, multi-select, auto-refresh, ui.ts (shared Tailwind class strings)
 worker/index.ts           two loops: job queue (concurrency 6) + send loop (every 2s → tickCampaigns). Graceful shutdown waits for an in-flight send
@@ -145,6 +145,7 @@ npm run typecheck    tsc --noEmit
 npm run lint         eslint
 npm run analyze -- example.com   debug the analyzer on real domains
 npm run test:campaign            sending engine test (throwaway DB, dry-run transport)
+npm run test:discovery           discovery test: resilience, parallel sources, domain list/Tranco/Wayback (throwaway DB, fakes, no network)
 npm run db:generate  create a migration after schema edits
 npm run db:studio    browse the DB
 ```
@@ -158,12 +159,16 @@ Before finishing a change, run `npm run typecheck && npm run lint`. For analyzer
 - [x] **F2** Filters (status, country, language, currency, apps, source, email, TR score, activity, category, product range, search), sorting, pagination, select-all-matching, bulk re-analyze/delete, CSV export, detail drawer with contact management
 - [x] **F3** Templates (plain text default, optional HTML), Gmail accounts with signature (`{{imza}}`), campaigns from store selection, throttled sending with daily cap and auto-pause, suppression list, test send, "already emailed" store filter
 - [x] **F4** Automatic discovery (all free). Findings from live probes (2026-11-20):
-  - **DuckDuckGo** HTML: `site:myshopify.com <tr keyword>` works well; most results are Turkish Shopify stores. It only serves the first page (10 results): next-page POSTs and `inurl:` queries get 202. Volume therefore comes from keyword × variation queries, spaced 10–16s apart, with backoff on 202 (stops as `blocked` after 3 tries; resumable).
+  - **DuckDuckGo** HTML: `site:myshopify.com <tr keyword>` works well; most results are Turkish Shopify stores. It only serves the first page (10 results): next-page POSTs and `inurl:` queries get 202. Volume therefore comes from keyword × variation queries, spaced 10–16s apart (× an adaptive `pace` up to 3 after blocks). On 202 it auto-waits 5/10/20/30/30 min and continues; only after all of these (≈95 min of blocks in a row) does it stop as `blocked` (resumable, "Devam ettir" resets the counter). Network errors retry after 30s/60s/120s. `stats.waitUntil/waitReason/blockStreak` persist the wait so a worker restart does not hit DDG immediately; the run card shows "… HH:MM civarında otomatik devam edecek". Common Crawl pages get two extra retries (2 and 5 min). Covered by `npm run test:discovery` (fake search + clock, no network).
   - Bing, Mojeek and Brave show captchas; don't use them.
   - **Common Crawl** CDX: `pageSize=1` gives ~100 stores per page, but the server often returns 504 (we retry 4× with backoff). Turkish ratio is under 1%, so use it with the TR filter.
   - **DNS**: apex A `23.227.38.*` or www CNAME `*.myshopify.com`.
   - The ingest pipeline: skip known (domain or myshopify_domain) → `probeStore` (meta.json) → TR filter → add by **primary domain**. Analysis marks later twins (same myshopify_domain) as status `duplicate`.
-  - Only one active discovery run at a time.
+  - One active run **per source** (decided 2026-11-25); different sources run in parallel. Discovery jobs use their own worker slots (`DISCOVERY_SLOTS`, 8), so they never starve `analyze_store` jobs.
+  - **Common Crawl domain list (.tr) + DNS** (source `ccdomains`, added 2026-11-25): it streams the web graph `domain-vertices.txt.gz` (~1 GB, sorted by reversed domain) and keeps only the `.tr` domains, stopping once it is past `tr`. That gave 231,625 domains in ~3 min. The list is cached in `data/discovery/<graph>-tr.txt`. DNS runs ~100 domains/s at 32 concurrent; about 0.3–0.45% are Shopify (≈700–1,000 TR stores, ~40 min). No search engine, no blocks.
+  - **Tranco** top 1M + DNS (source `tranco`): the list id comes from `tranco-list.eu/top-1m-id` and the CSV from `/download/<id>/1000000`. The next start offset is derived from previous runs.
+  - **Wayback CDX** (source `wayback`): `url=myshopify.com&matchType=domain&fl=urlkey&collapse=urlkey&page=N`, ~45k pages. It is slow (10–60s per page) and returns 1–200 hosts per page, with a TR ratio under 1%. Pages are spaced 4–8s apart; the next page is kept in kv `wayback_next_page`.
+  - Google is not an option: the Custom Search JSON API has been closed to new customers since 2026-01-20 and shuts down 2027-01-01. HTML scraping hits captchas.
 - (original F4 plan, kept for reference):
   - Common Crawl CDX index for `*.myshopify.com`, then resolve the real domain via `/meta.json`
   - Search-engine HTML results (slow, polite)

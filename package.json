@@ -15,7 +15,8 @@
     "db:studio": "drizzle-kit studio",
     "analyze": "tsx scripts/analyze.ts",
     "test:campaign": "node --env-file=scripts/test.env --import tsx scripts/test-campaign.ts",
-    "test:findings": "tsx scripts/test-findings.ts"
+    "test:findings": "tsx scripts/test-findings.ts",
+    "test:discovery": "tsx scripts/test-discovery.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",
