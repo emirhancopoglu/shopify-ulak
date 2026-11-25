@@ -13,6 +13,10 @@ export type EmailFilter = (typeof EMAIL_FILTERS)[number];
 export const CONTACTED_FILTERS = ["yes", "no"] as const;
 export type ContactedFilter = (typeof CONTACTED_FILTERS)[number];
 
+/** yes: en az bir eksik var · no: analiz edildi, eksik yok · unanalyzed: eksik kontrollerinden önce analiz edilmiş */
+export const FINDING_FILTERS = ["yes", "no", "unanalyzed"] as const;
+export type FindingFilter = (typeof FINDING_FILTERS)[number];
+
 export const PAGE_SIZES = [50, 100, 200] as const;
 
 export type StoreFilters = {
@@ -27,6 +31,8 @@ export type StoreFilters = {
   email?: EmailFilter;
   /** Herhangi bir kampanyada mail gönderildi mi */
   contacted?: ContactedFilter;
+  /** Mağaza eksikleri (bulgu) var mı */
+  findings?: FindingFilter;
   minProducts?: number;
   maxProducts?: number;
   minTr?: number;
@@ -74,6 +80,7 @@ export function parseFilters(p: Params): StoreFilters {
     category: get(p, "cat"),
     email: oneOf(EMAIL_FILTERS, get(p, "email")),
     contacted: oneOf(CONTACTED_FILTERS, get(p, "sent")),
+    findings: oneOf(FINDING_FILTERS, get(p, "bulgu")),
     minProducts: num(p, "pmin"),
     maxProducts: num(p, "pmax"),
     minTr: num(p, "tr"),
@@ -103,6 +110,7 @@ export function serializeFilters(f: Partial<StoreFilters>): URLSearchParams {
   set("cat", f.category);
   set("email", f.email);
   set("sent", f.contacted);
+  set("bulgu", f.findings);
   set("pmin", f.minProducts);
   set("pmax", f.maxProducts);
   set("tr", f.minTr);
@@ -127,6 +135,7 @@ export function activeFilterCount(f: StoreFilters): number {
     f.category,
     f.email,
     f.contacted,
+    f.findings,
     f.minProducts,
     f.maxProducts,
     f.minTr,

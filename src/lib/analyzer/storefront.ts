@@ -18,12 +18,14 @@ export type ShopifyMeta = {
 };
 
 export type ShopifyProduct = {
+  handle?: string;
   product_type?: string;
   vendor?: string;
   tags?: string[] | string;
   created_at?: string;
   published_at?: string;
   variants?: { price?: string | number }[];
+  images?: { alt?: string | null; src?: string }[];
 };
 
 export function hasShopifyHeaders(h: Headers): boolean {

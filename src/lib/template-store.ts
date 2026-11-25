@@ -1,9 +1,19 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Template, TemplateFormat } from "@/db/schema";
-import { DEFAULT_TEMPLATE } from "@/lib/template";
+import { DEFAULT_TEMPLATE, STARTER_BATCHES } from "@/lib/template";
+import { getSetting, setSetting } from "@/lib/settings";
 
 const { templates } = schema;
+
+/** Hazır şablon paketlerini bir kez ekler. Kullanıcı silerse tekrar eklenmez. */
+export function ensureStarterTemplates() {
+  for (const batch of STARTER_BATCHES) {
+    if (getSetting(batch.flag) === "done") continue;
+    for (const t of batch.templates) db.insert(templates).values(t).run();
+    setSetting(batch.flag, "done");
+  }
+}
 
 /** Hiç şablon yoksa kullanıcının metniyle bir başlangıç şablonu oluşturur. */
 export function ensureDefaultTemplate() {
@@ -13,6 +23,7 @@ export function ensureDefaultTemplate() {
 
 export function listTemplates(): Template[] {
   ensureDefaultTemplate();
+  ensureStarterTemplates();
   return db.select().from(templates).orderBy(desc(templates.updatedAt)).all();
 }
 

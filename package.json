@@ -14,7 +14,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "analyze": "tsx scripts/analyze.ts",
-    "test:campaign": "node --env-file=scripts/test.env --import tsx scripts/test-campaign.ts"
+    "test:campaign": "node --env-file=scripts/test.env --import tsx scripts/test-campaign.ts",
+    "test:findings": "tsx scripts/test-findings.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",

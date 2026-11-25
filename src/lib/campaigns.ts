@@ -21,6 +21,8 @@ const MAX_ATTEMPTS = 3;
 /** Mağazadan şablon değişkenleri (kampanyaya eklenirken kopyalanır). */
 export function storeVars(store: Store): Record<string, string> {
   const url = store.finalUrl ? new URL(store.finalUrl).origin : `https://${store.domain}`;
+  // En öncelikli mağaza eksiği; yoksa boş (şablonda {{bulgu|...}} varsayılanı kullanılır)
+  const topFinding = store.findings?.[0];
   return {
     marka: (store.brandNameOverride ?? store.brandName ?? store.domain).trim(),
     site: store.domain,
@@ -28,6 +30,7 @@ export function storeVars(store: Store): Record<string, string> {
     kategori: store.category ?? "",
     sehir: store.city ?? "",
     ulke: store.country ? countryName(store.country) : "",
+    bulgu: topFinding ? `${topFinding.sentence} Bunların çoğu mevcut temanızı değiştirmeden düzeltilebilir.` : "",
   };
 }
 

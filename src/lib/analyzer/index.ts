@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import type { StoreStatus } from "@/db/schema";
 import { cleanEmail, extractEmails, hasMx, rankEmail } from "./emails";
 import { describeError, fetchJson, fetchPage, type Page } from "./http";
+import { analyzeFindings, type Finding } from "./findings";
 import {
   computeTrScore,
   detectApps,
@@ -43,6 +44,7 @@ export type AnalysisResult = {
   socials: Record<string, string>;
   trScore: number;
   emails: FoundEmail[]; // puana göre sıralı, ilki birincil
+  findings: Finding[]; // öncelik sıralı mağaza eksikleri (şifreli mağazalarda boş)
 };
 
 const empty = (status: StoreStatus, error: string | null = null): AnalysisResult => ({
@@ -67,6 +69,7 @@ const empty = (status: StoreStatus, error: string | null = null): AnalysisResult
   socials: {},
   trScore: 0,
   emails: [],
+  findings: [],
 });
 
 /** Mail aramak için ana sayfadan sonra bakılacak standart Shopify sayfaları. */
@@ -122,9 +125,11 @@ export async function analyzeStore(domain: string): Promise<AnalysisResult> {
 
   // --- Ürünler ---
   let productStats = summarizeProducts([]);
+  let productList: ShopifyProduct[] = [];
   if (!passwordProtected) {
     const data = await fetchJson<{ products?: ShopifyProduct[] }>(`${origin}/products.json?limit=250`);
-    productStats = summarizeProducts(data?.products ?? []);
+    productList = data?.products ?? [];
+    productStats = summarizeProducts(productList);
   }
 
   // --- Mail adresleri ---
@@ -165,6 +170,11 @@ export async function analyzeStore(domain: string): Promise<AnalysisResult> {
   );
   emails.sort((a, b) => Number(b.mxValid !== false) - Number(a.mxValid !== false) || b.score - a.score);
 
+  // --- Mağaza eksikleri (şifreli mağazada erişim yok, atlanır) ---
+  const findings = passwordProtected
+    ? []
+    : await analyzeFindings({ origin, finalUrl: home.url, $, html, products: productList });
+
   const language = parseLanguage($, html);
   const country = meta?.country ?? null;
   const currency = meta?.currency ?? null;
@@ -196,5 +206,6 @@ export async function analyzeStore(domain: string): Promise<AnalysisResult> {
     socials: detectSocials($),
     trScore: computeTrScore({ country, currency, language, host }),
     emails,
+    findings,
   };
 }
