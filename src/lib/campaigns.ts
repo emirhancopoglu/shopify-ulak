@@ -321,7 +321,7 @@ export function recoverInterruptedSends() {
 const fmtTime = (ms: number) => new Intl.DateTimeFormat("tr-TR", { weekday: "short", hour: "2-digit", minute: "2-digit" }).format(ms);
 
 /** Her çağrıda, zamanı gelmiş her çalışan kampanyadan en fazla bir mail gönderir. */
-export async function tickCampaigns(now = Date.now()) {
+export async function tickCampaigns(now = Date.now(), sendFn: typeof sendEmail = sendEmail) {
   const due = db
     .select()
     .from(campaigns)
@@ -336,7 +336,7 @@ export async function tickCampaigns(now = Date.now()) {
     }
     if (busyAccounts.has(c.accountId)) continue; // aynı hesaptan aynı anda tek gönderim
     busyAccounts.add(c.accountId);
-    await sendNext(c, now);
+    await sendNext(c, now, sendFn);
   }
 }
 
@@ -344,7 +344,7 @@ function setNext(id: number, at: number) {
   db.update(campaigns).set({ nextSendAt: new Date(at) }).where(eq(campaigns.id, id)).run();
 }
 
-async function sendNext(c: Campaign, now: number) {
+async function sendNext(c: Campaign, now: number, sendFn: typeof sendEmail) {
   const account = getAccount(c.accountId!);
   if (!account) return pauseCampaign(c.id, "Gönderen hesap bulunamadı.");
 
@@ -399,7 +399,7 @@ async function sendNext(c: Campaign, now: number) {
     .run();
 
   try {
-    const { messageId } = await sendEmail(account, { to: r.email, subject: rendered.subject, text: rendered.text, html: rendered.html });
+    const { messageId } = await sendFn(account, { to: r.email, subject: rendered.subject, text: rendered.text, html: rendered.html });
     db.update(recipients).set({ status: "sent", sentAt: new Date(), messageId, error: null }).where(eq(recipients.id, r.id)).run();
     if (account.lastError) setAccountError(account.id, null);
     if (countsFor(c.id).queued === 0) {
@@ -416,6 +416,10 @@ async function sendNext(c: Campaign, now: number) {
       // Alıcının suçu değil: sıraya geri koy, kampanyayı durdur
       db.update(recipients).set({ status: "queued", attempts: r.attempts, error: null }).where(eq(recipients.id, r.id)).run();
       if (kind === "auth") setAccountError(account.id, message);
+      pauseCampaign(c.id, message);
+    } else if (kind === "policy") {
+      // İçerik/güvenlik engeli: tekrar deneme, kara listeye alma, kampanyayı durdur
+      db.update(recipients).set({ status: "failed", error: message }).where(eq(recipients.id, r.id)).run();
       pauseCampaign(c.id, message);
     } else if (kind === "recipient") {
       db.update(recipients).set({ status: "failed", error: message }).where(eq(recipients.id, r.id)).run();

@@ -20,6 +20,7 @@
     "better-sqlite3": "^13.2.0",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.45.4",
+    "imapflow": "^2.12.2",
     "next": "16.4.6",
     "nodemailer": "^10.6.0",
     "react": "19.3.0",
