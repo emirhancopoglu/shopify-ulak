@@ -216,7 +216,7 @@ export const suppression = sqliteTable("suppression", {
 // Keşif (F4)
 // ---------------------------------------------------------------------------
 
-export const DISCOVERY_SOURCES = ["search", "commoncrawl", "dns"] as const;
+export const DISCOVERY_SOURCES = ["search", "commoncrawl", "dns", "ccdomains", "tranco", "wayback"] as const;
 export type DiscoverySource = (typeof DISCOVERY_SOURCES)[number];
 export const DISCOVERY_STATUSES = ["queued", "running", "done", "failed", "cancelled", "blocked"] as const;
 export type DiscoveryStatus = (typeof DISCOVERY_STATUSES)[number];
@@ -229,6 +229,13 @@ export type DiscoveryStats = {
   shopify: number; // Shopify olduğu doğrulanan
   matched: number; // filtreye uyan (ör. Türk)
   added: number; // listeye eklenen
+  /** Otomatik bekleme bitişi (ms). Doluysa çalıştırma bekliyor; worker yeniden başlasa da süre korunur. */
+  waitUntil?: number | null;
+  waitReason?: string | null;
+  /** Art arda engel sayısı (bekleme süresini büyütmek için; yeniden başlamada korunur) */
+  blockStreak?: number;
+  /** Çalışırken gösterilecek ara durum (ör. "Liste indiriliyor: %40") */
+  note?: string | null;
 };
 
 export const discoveryRuns = sqliteTable("discovery_runs", {

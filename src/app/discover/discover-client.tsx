@@ -4,9 +4,35 @@ import Link from "next/link";
 import { useActionState, useState, useTransition } from "react";
 import { ui, type FormState } from "@/components/ui";
 import type { DiscoveryRun, DiscoveryStatus } from "@/db/schema";
-import { cancelRunAction, deleteRunAction, resumeRunAction, startCommonCrawlAction, startDnsAction, startSearchAction } from "./actions";
+import {
+  cancelRunAction,
+  deleteRunAction,
+  resumeRunAction,
+  startCcDomainsAction,
+  startCommonCrawlAction,
+  startDnsAction,
+  startSearchAction,
+  startTrancoAction,
+  startWaybackAction,
+} from "./actions";
 
-const SOURCE_LABEL: Record<DiscoveryRun["source"], string> = { search: "Arama (DuckDuckGo)", commoncrawl: "Common Crawl", dns: "DNS listesi" };
+const SOURCE_LABEL: Record<DiscoveryRun["source"], string> = {
+  search: "Arama (DuckDuckGo)",
+  commoncrawl: "Common Crawl",
+  dns: "DNS listesi",
+  ccdomains: "Alan adı arşivi (.tr)",
+  tranco: "Popüler siteler (Tranco)",
+  wayback: "Wayback arşivi",
+};
+
+const UNIT_LABEL: Record<DiscoveryRun["source"], string> = {
+  search: "sorgu",
+  commoncrawl: "sayfa",
+  dns: "alan adı",
+  ccdomains: "alan adı",
+  tranco: "site",
+  wayback: "sayfa",
+};
 
 const STATUS: Record<DiscoveryStatus, { label: string; cls: string }> = {
   queued: { label: "Sırada", cls: "bg-stone-100 text-stone-700" },
@@ -39,7 +65,7 @@ function TrOnly({ defaultChecked }: { defaultChecked: boolean }) {
 
 function Submit({ pending, disabled, children }: { pending: boolean; disabled: boolean; children: React.ReactNode }) {
   return (
-    <button disabled={pending || disabled} className={ui.btnPrimary} title={disabled ? "Çalışan bir keşif var" : undefined}>
+    <button disabled={pending || disabled} className={ui.btnPrimary} title={disabled ? "Bu kaynakta çalışan bir keşif var" : undefined}>
       {pending ? "Başlatılıyor…" : children}
     </button>
   );
@@ -206,6 +232,102 @@ export function DnsForm({ disabled }: { disabled: boolean }) {
   );
 }
 
+export function CcDomainsForm({ graph, scannedAt, disabled }: { graph: string | null; scannedAt: string | null; disabled: boolean }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(startCcDomainsAction, null);
+  return (
+    <Card
+      title="Alan adı arşivi (.tr)"
+      desc="Common Crawl'ın ücretsiz alan adı listesindeki tüm .tr alan adlarını DNS ile tarar; Shopify'a bağlı olanları ekler. Arama motoru kullanmaz, engellenmez."
+    >
+      <form action={action} className="flex flex-col gap-3">
+        <p className="text-[13px] text-stone-600">
+          Liste sürümü: <span className="font-mono text-[12px]">{graph ?? "alınamadı (başlatınca tekrar denenir)"}</span>
+        </p>
+        {scannedAt && <p className="text-[13px] text-amber-800">Bu sürüm {scannedAt} tarihinde tamamen tarandı; yeni sürüm çıkınca tekrar çalıştırın.</p>}
+        <TrOnly defaultChecked={false} />
+        <p className="text-xs text-stone-500">
+          İlk çalıştırmada ~1 GB&apos;lık liste akış halinde okunur (birkaç dakika; diske yalnızca .tr kısmı yazılır). Ardından yüz binlerce alan adı DNS ile
+          kontrol edilir; saatler sürebilir, sayfayı kapatabilirsiniz.
+        </p>
+        <Submit pending={pending} disabled={disabled}>
+          Taramayı başlat
+        </Submit>
+        <Msg state={state} />
+      </form>
+    </Card>
+  );
+}
+
+export function TrancoForm({ listId, nextStart, disabled }: { listId: string | null; nextStart: number; disabled: boolean }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(startTrancoAction, null);
+  const [limit, setLimit] = useState(100_000);
+  return (
+    <Card
+      title="Popüler siteler (Tranco)"
+      desc="Dünyanın en popüler 1 milyon sitesini DNS ile tarar; Shopify olanları Türkiye filtresinden geçirir. Büyük, aktif .com mağazaları yakalar; Türk oranı düşüktür."
+    >
+      <form action={action} className="flex flex-col gap-3">
+        <p className="text-[13px] text-stone-600">
+          Liste sürümü: <span className="font-mono text-[12px]">{listId ?? "alınamadı (başlatınca tekrar denenir)"}</span>
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className={ui.label}>Başlangıç sırası</span>
+            <input name="start" type="number" min={0} max={999_999} defaultValue={nextStart} className={ui.input} />
+          </label>
+          <label className="block">
+            <span className={ui.label}>Site sayısı</span>
+            <select name="limit" value={limit} onChange={(e) => setLimit(Number(e.target.value))} className={ui.input}>
+              {[50_000, 100_000, 250_000, 500_000, 1_000_000].map((n) => (
+                <option key={n} value={n}>
+                  {n.toLocaleString("tr-TR")}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <TrOnly defaultChecked />
+        <p className="text-xs text-stone-500">
+          Saniyede ~100 site; tahmini ~{Math.ceil(limit / 100 / 60)} dk. Başlangıç sırası, en son kalınan yere otomatik ayarlanır.
+        </p>
+        <Submit pending={pending} disabled={disabled}>
+          Taramayı başlat
+        </Submit>
+        <Msg state={state} />
+      </form>
+    </Card>
+  );
+}
+
+export function WaybackForm({ nextPage, totalPages, disabled }: { nextPage: number; totalPages: number | null; disabled: boolean }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(startWaybackAction, null);
+  return (
+    <Card
+      title="Wayback arşivi"
+      desc="Internet Archive'daki *.myshopify.com adresleri. Engellemez ama yavaştır (sayfa başına 10-60 sn) ve Türk oranı %1'in altındadır; arka planda uzun süre çalıştırmak için."
+    >
+      <form action={action} className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className={ui.label}>Başlangıç sayfası{totalPages ? ` (toplam ${totalPages.toLocaleString("tr-TR")})` : ""}</span>
+            <input name="startPage" type="number" min={0} defaultValue={nextPage} className={ui.input} />
+          </label>
+          <label className="block">
+            <span className={ui.label}>Sayfa sayısı</span>
+            <input name="pageCount" type="number" min={1} max={500} defaultValue={50} className={ui.input} />
+          </label>
+        </div>
+        <TrOnly defaultChecked />
+        <p className="text-xs text-stone-500">Sayfa başına 1-200 mağaza kontrol edilir. Başlangıç sayfası, en son kalınan yere otomatik ayarlanır.</p>
+        <Submit pending={pending} disabled={disabled}>
+          Taramayı başlat
+        </Submit>
+        <Msg state={state} />
+      </form>
+    </Card>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 export function RunCard({ run }: { run: DiscoveryRun }) {
@@ -214,15 +336,33 @@ export function RunCard({ run }: { run: DiscoveryRun }) {
   const s = run.stats;
   const pct = s.total ? Math.round((s.cursor / s.total) * 100) : 0;
   const active = run.status === "queued" || run.status === "running";
-  const resumable = ["blocked", "failed", "cancelled"].includes(run.status) && s.cursor < s.total;
-  const p = run.params as { keywords?: string[]; index?: string; startPage?: number; pageCount?: number; domains?: string[]; trOnly?: boolean };
+  const resumable = ["blocked", "failed", "cancelled"].includes(run.status) && (s.total === 0 || s.cursor < s.total);
+  const p = run.params as {
+    keywords?: string[];
+    index?: string;
+    startPage?: number;
+    pageCount?: number;
+    domains?: string[];
+    graph?: string;
+    tlds?: string[];
+    listId?: string;
+    start?: number;
+    limit?: number;
+    trOnly?: boolean;
+  };
 
   const summary =
     run.source === "search"
       ? `${(p.keywords ?? []).slice(0, 4).join(", ")}${(p.keywords?.length ?? 0) > 4 ? ` +${(p.keywords?.length ?? 0) - 4}` : ""}`
       : run.source === "commoncrawl"
         ? `${p.index} · sayfa ${p.startPage}–${(p.startPage ?? 0) + (p.pageCount ?? 0) - 1}`
-        : `${p.domains?.length ?? 0} alan adı`;
+        : run.source === "ccdomains"
+          ? `${p.graph} · ${(p.tlds ?? []).map((t) => `.${t}`).join(", ")}`
+          : run.source === "tranco"
+            ? `${p.listId} · ${((p.start ?? 0) + 1).toLocaleString("tr-TR")}–${((p.start ?? 0) + (p.limit ?? 0)).toLocaleString("tr-TR")}. site`
+            : run.source === "wayback"
+              ? `sayfa ${p.startPage}–${(p.startPage ?? 0) + (p.pageCount ?? 0) - 1}`
+              : `${p.domains?.length ?? 0} alan adı`;
 
   return (
     <div className={`${ui.card} p-4`}>
@@ -257,7 +397,7 @@ export function RunCard({ run }: { run: DiscoveryRun }) {
       </div>
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-stone-600 tabular-nums">
         <span>
-          {s.cursor}/{s.total} {run.source === "search" ? "sorgu" : run.source === "commoncrawl" ? "sayfa" : "alan adı"}
+          {s.cursor.toLocaleString("tr-TR")}/{s.total ? s.total.toLocaleString("tr-TR") : "?"} {UNIT_LABEL[run.source]}
         </span>
         <span>{s.candidates} aday</span>
         <span>{s.shopify} Shopify</span>
@@ -268,6 +408,13 @@ export function RunCard({ run }: { run: DiscoveryRun }) {
         </Link>
       </div>
 
+      {run.status === "running" && s.note ? <p className="mt-2 text-[13px] text-stone-600">{s.note}</p> : null}
+      {run.status === "running" && s.waitUntil ? (
+        <p className="mt-2 text-[13px] text-amber-800">
+          {s.waitReason ?? "Bekleniyor"} · {new Date(s.waitUntil).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} civarında otomatik devam
+          edecek. Sayfayı kapatabilirsiniz.
+        </p>
+      ) : null}
       {run.error && <p className="mt-2 text-[13px] text-amber-800">{run.error}</p>}
       {msg && !msg.ok && <p className="mt-2 text-[13px] text-red-700">{msg.message}</p>}
 
