@@ -27,6 +27,11 @@ async function cname(host: string): Promise<string[]> {
   }
 }
 
+/** Alan adının bir IPv4 adresi var mı (ölü/park edilmemiş adresleri HTTP öncesi elemek için). */
+export async function hasARecord(domain: string): Promise<boolean> {
+  return (await aRecords(domain.replace(/^www\./, ""))).length > 0;
+}
+
 export async function looksLikeShopify(domain: string): Promise<boolean> {
   const host = domain.replace(/^www\./, "");
   const [apexA, wwwCname, apexCname] = await Promise.all([aRecords(host), cname(`www.${host}`), cname(host)]);

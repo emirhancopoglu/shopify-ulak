@@ -7,12 +7,13 @@ import { ui } from "@/components/ui";
 import { RECIPIENT_STATUSES, type RecipientStatus } from "@/db/schema";
 import { getAccount, listAccounts, sentInLast24h } from "@/lib/accounts";
 import { CAMPAIGN_STATUS, RECIPIENT_STATUS } from "@/lib/campaign-labels";
-import { getCampaign, listRecipients, missingVarsReport, previewRecipient, RECIPIENT_PAGE_SIZE } from "@/lib/campaigns";
+import { audienceMismatchReport, getCampaign, listRecipients, missingVarsReport, previewRecipient, RECIPIENT_PAGE_SIZE } from "@/lib/campaigns";
 import { nowMs } from "@/lib/format";
 import { isWorkerAlive } from "@/lib/jobs";
+import { AUDIENCE_LABEL } from "@/lib/template-audience";
 import { listTemplates } from "@/lib/template-store";
 import { ProgressBar } from "../progress-bar";
-import { CampaignControls, NextSend, RecipientsTable, SettingsForm } from "./campaign-client";
+import { AudienceMismatchBox, CampaignControls, NextSend, RecipientsTable, SettingsForm } from "./campaign-client";
 
 type Props = PageProps<"/campaigns/[id]">;
 
@@ -42,7 +43,8 @@ async function CampaignContent({ params, searchParams }: Pick<Props, "params" | 
   const page = Math.max(1, Number(one(sp.page)) || 1);
   const recipients = listRecipients(campaign.id, { status: statusFilter, page });
   const preview = previewRecipient(campaign.id, Number(one(sp.preview)) || undefined);
-  const templates = listTemplates().map((t) => ({ id: t.id, name: t.name, format: t.format }));
+  const templates = listTemplates().map((t) => ({ id: t.id, name: t.name, format: t.format, audience: t.audience }));
+  const mismatch = campaign.status === "draft" || campaign.status === "paused" ? audienceMismatchReport(campaign.id) : null;
   const accounts = listAccounts();
   const account = campaign.accountId ? getAccount(campaign.accountId) : undefined;
   const sent24h = account ? sentInLast24h(account.id) : 0;
@@ -143,6 +145,10 @@ async function CampaignContent({ params, searchParams }: Pick<Props, "params" | 
             accounts={accounts.map((a) => ({ id: a.id, label: `${a.fromName} <${a.email}>`, dailyLimit: a.dailyLimit }))}
             editable={editable}
           />
+
+          {mismatch && editable && (
+            <AudienceMismatchBox campaignId={campaign.id} templateName={mismatch.templateName} audienceLabel={AUDIENCE_LABEL[mismatch.audience]} count={mismatch.count} />
+          )}
 
           {missing.count > 0 && (
             <p className="rounded-md bg-amber-50 px-3 py-2 text-[13px] text-amber-900">

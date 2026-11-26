@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useState, useTransition } from "react";
 import { MultiSelect } from "@/components/multi-select";
-import { STORE_STATUSES } from "@/db/schema";
+import { STORE_STATUSES, type Platform } from "@/db/schema";
 import { countryName, flag, languageLabel, STATUS_LABEL } from "@/lib/format";
+import { PLATFORM_LABEL } from "@/lib/platform-labels";
 import { activeFilterCount, DEFAULT_FILTERS, serializeFilters, type StoreFilters } from "@/lib/store-filters";
 import type { StoreFacets } from "@/lib/stores";
 
@@ -52,6 +53,8 @@ const SOURCE_LABEL: Record<string, string> = {
   ccdomains: "Alan adı arşivi",
   tranco: "Popüler siteler",
   wayback: "Wayback arşivi",
+  general_ccdomains: "Genel: alan adı arşivi",
+  general_tranco: "Genel: popüler siteler",
 };
 
 export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; facets: StoreFacets; total: number }) {
@@ -86,6 +89,19 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
     if (minProducts !== filters.minProducts || maxProducts !== filters.maxProducts) apply({ minProducts, maxProducts });
   };
 
+  // Tür değişince platform seçimi sıfırlanır (Shopify + Next.js gibi boş sonuç veren birleşimler olmasın).
+  // "Genel siteler"de Shopify'a özel filtreler anlamsızdır, onlar da temizlenir.
+  const selectKind = (kind: StoreFilters["kind"]) => {
+    if (kind === "genel") {
+      setCategory("");
+      setPmin("");
+      setPmax("");
+      apply({ kind, platform: undefined, app: undefined, category: undefined, minProducts: undefined, maxProducts: undefined, activeDays: undefined, findings: undefined });
+    } else {
+      apply({ kind, platform: undefined });
+    }
+  };
+
   const clearAll = () => {
     setQ("");
     setCategory("");
@@ -104,6 +120,12 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
     .sort((a, b) => Number(b.value === "TR") - Number(a.value === "TR"))
     .map((f) => ({ value: f.value, label: `${flag(f.value)} ${countryName(f.value)}`, count: f.count }));
 
+  // Shopify'a özel filtreler (uygulama, kategori, ürün sayısı, son ürün, eksikler) genel sitelerde anlamsız
+  const showShopifyOnly = filters.kind !== "genel";
+  const platformOptions = facets.platform
+    .filter((f) => (filters.kind === "shopify" ? f.value === "shopify" : filters.kind === "genel" ? f.value !== "shopify" : true))
+    .map((f) => ({ value: f.value, label: PLATFORM_LABEL[f.value as Platform] ?? f.value, count: f.count }));
+
   const presetActive = {
     tr: filters.minTr === 40,
     ready: filters.email === "valid" && filters.contacted === "no" && filters.status?.length === 1 && filters.status[0] === "done",
@@ -118,6 +140,7 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
           placeholder="Ara: alan adı, marka, mail…"
           className="h-8 w-64 rounded-md border border-stone-300 px-2.5 outline-none focus:border-stone-500"
         />
+        <KindToggle value={filters.kind} counts={facets.kind} onChange={selectKind} />
         <span className="mx-1 h-5 w-px bg-stone-200" />
         <span className="text-xs text-stone-500">Hazır filtreler:</span>
         <Preset active={presetActive.tr} onClick={() => apply({ minTr: presetActive.tr ? undefined : 40 })}>
@@ -133,9 +156,11 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
         >
           ✉ Gönderime hazır
         </Preset>
-        <Preset active={filters.activeDays === 90} onClick={() => apply({ activeDays: filters.activeDays === 90 ? undefined : 90 })}>
-          Aktif (90 gün)
-        </Preset>
+        {showShopifyOnly && (
+          <Preset active={filters.activeDays === 90} onClick={() => apply({ activeDays: filters.activeDays === 90 ? undefined : 90 })}>
+            Aktif (90 gün)
+          </Preset>
+        )}
         <div className="ml-auto flex items-center gap-3">
           {isPending && <span className="text-xs text-stone-400">yükleniyor…</span>}
           <span className="text-stone-500">
@@ -150,6 +175,13 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        <MultiSelect
+          label="Platform"
+          value={filters.platform ?? []}
+          onChange={(v) => apply({ platform: v as Platform[] })}
+          options={platformOptions}
+          emptyText="Henüz platformu belirlenmiş site yok"
+        />
         <MultiSelect
           label="Durum"
           value={filters.status ?? []}
@@ -175,12 +207,14 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
           onChange={(v) => apply({ currency: v })}
           options={facets.currency.map((f) => ({ value: f.value, label: f.value, count: f.count }))}
         />
-        <MultiSelect
-          label="Uygulama"
-          value={filters.app ?? []}
-          onChange={(v) => apply({ app: v })}
-          options={facets.app.map((f) => ({ value: f.value, label: f.value, count: f.count }))}
-        />
+        {showShopifyOnly && (
+          <MultiSelect
+            label="Uygulama"
+            value={filters.app ?? []}
+            onChange={(v) => apply({ app: v })}
+            options={facets.app.map((f) => ({ value: f.value, label: f.value, count: f.count }))}
+          />
+        )}
         {facets.source.length > 1 && (
           <MultiSelect
             label="Kaynak"
@@ -197,27 +231,34 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
           options={CONTACTED_OPTIONS}
           onChange={(v) => apply({ contacted: (v || undefined) as StoreFilters["contacted"] })}
         />
-        <Select
-          label="Eksik"
-          value={filters.findings ?? ""}
-          options={FINDING_OPTIONS}
-          onChange={(v) => apply({ findings: (v || undefined) as StoreFilters["findings"] })}
-        />
+        {showShopifyOnly && (
+          <Select
+            label="Eksik"
+            value={filters.findings ?? ""}
+            options={FINDING_OPTIONS}
+            onChange={(v) => apply({ findings: (v || undefined) as StoreFilters["findings"] })}
+          />
+        )}
         <Select label="TR puanı" value={filters.minTr?.toString() ?? ""} options={TR_OPTIONS} onChange={(v) => apply({ minTr: v ? Number(v) : undefined })} />
-        <Select
-          label="Son ürün"
-          value={filters.activeDays?.toString() ?? ""}
-          options={ACTIVE_OPTIONS}
-          onChange={(v) => apply({ activeDays: v ? Number(v) : undefined })}
-        />
+        {showShopifyOnly && (
+          <>
+            <Select
+              label="Son ürün"
+              value={filters.activeDays?.toString() ?? ""}
+              options={ACTIVE_OPTIONS}
+              onChange={(v) => apply({ activeDays: v ? Number(v) : undefined })}
+            />
 
-        <input
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          placeholder="Kategori içerir…"
-          className="h-8 w-40 rounded-md border border-stone-300 px-2.5 outline-none focus:border-stone-500"
-        />
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Kategori içerir…"
+              className="h-8 w-40 rounded-md border border-stone-300 px-2.5 outline-none focus:border-stone-500"
+            />
+          </>
+        )}
 
+        {showShopifyOnly && (
         <div className="flex h-8 items-center rounded-md border border-stone-300 bg-white px-2.5">
           <span className="mr-2 text-stone-500">Ürün</span>
           {[
@@ -238,8 +279,47 @@ export function FiltersBar({ filters, facets, total }: { filters: StoreFilters; 
             </span>
           ))}
         </div>
+        )}
       </div>
     </section>
+  );
+}
+
+/** Tür seçici: Tümü / Shopify / Genel siteler (sayılarla). */
+function KindToggle({
+  value,
+  counts,
+  onChange,
+}: {
+  value: StoreFilters["kind"];
+  counts: { shopify: number; general: number };
+  onChange: (v: StoreFilters["kind"]) => void;
+}) {
+  const items: { v: StoreFilters["kind"]; label: string; n: number }[] = [
+    { v: undefined, label: "Tümü", n: counts.shopify + counts.general },
+    { v: "shopify", label: "Shopify", n: counts.shopify },
+    { v: "genel", label: "Genel siteler", n: counts.general },
+  ];
+  return (
+    <div role="group" aria-label="Tür" className="flex h-8 overflow-hidden rounded-md border border-stone-300 bg-white">
+      {items.map((item) => {
+        const isActive = value === item.v;
+        return (
+          <button
+            key={item.label}
+            type="button"
+            aria-pressed={isActive}
+            onClick={() => onChange(item.v)}
+            className={`flex items-center gap-1.5 px-3 text-[13px] ${
+              isActive ? "bg-stone-900 font-medium text-white" : "text-stone-700 hover:bg-stone-50"
+            } [&:not(:first-child)]:border-l [&:not(:first-child)]:border-stone-300`}
+          >
+            {item.label}
+            <span className={`tabular-nums text-xs ${isActive ? "text-stone-300" : "text-stone-400"}`}>{item.n.toLocaleString("tr-TR")}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

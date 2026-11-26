@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { ui } from "@/components/ui";
 import { nowMs, timeAgo } from "@/lib/format";
+import { AUDIENCE_SHORT_LABEL } from "@/lib/template-audience";
 import { listTemplates } from "@/lib/template-store";
 import { createTemplateAction } from "./actions";
 
@@ -38,6 +39,7 @@ async function TemplateList() {
             <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${t.format === "html" ? "bg-violet-100 text-violet-800" : "bg-stone-100 text-stone-600"}`}>
               {t.format === "html" ? "HTML" : "DÜZ METİN"}
             </span>
+            <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-semibold text-sky-800">{AUDIENCE_SHORT_LABEL[t.audience]}</span>
             <span className="ml-auto text-xs text-stone-400">güncellendi {timeAgo(t.updatedAt, now)}</span>
           </div>
           <div className="mt-1 truncate text-stone-600">

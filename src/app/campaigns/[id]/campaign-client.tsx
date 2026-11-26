@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { ui, type FormState } from "@/components/ui";
-import type { CampaignStatus, RecipientStatus, TemplateFormat } from "@/db/schema";
+import type { CampaignStatus, RecipientStatus, TemplateAudience, TemplateFormat } from "@/db/schema";
 import { RECIPIENT_STATUS } from "@/lib/campaign-labels";
+import { AUDIENCE_SHORT_LABEL } from "@/lib/template-audience";
 import {
   deleteCampaignAction,
   pauseCampaignAction,
+  removeAudienceMismatchesAction,
   removeRecipientAction,
   retryFailedAction,
   saveCampaignSettingsAction,
@@ -74,6 +76,43 @@ export function CampaignControls({ id, status, hasFailed }: { id: number; status
 }
 
 // ---------------------------------------------------------------------------
+// Hedef kitle uyarısı (şablon ile alıcılar uyuşmuyor)
+// ---------------------------------------------------------------------------
+
+export function AudienceMismatchBox({
+  campaignId,
+  templateName,
+  audienceLabel,
+  count,
+}: {
+  campaignId: number;
+  templateName: string;
+  audienceLabel: string;
+  count: number;
+}) {
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<FormState>(null);
+  return (
+    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-900">
+      <p>
+        ✕ &quot;{templateName}&quot; şablonu yalnızca <b>{audienceLabel}</b> için hazırlanmış, ama kuyrukta buna uymayan <b>{count}</b> alıcı var. Bu hâlde kampanya başlatılamaz.
+        Şablonu değiştirin ya da uymayan alıcıları çıkarın.
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          disabled={pending}
+          onClick={() => confirm(`${count} alıcı kampanyadan çıkarılsın mı?`) && start(async () => setMsg(await removeAudienceMismatchesAction(campaignId)))}
+          className={ui.btnDanger}
+        >
+          {pending ? "Çıkarılıyor…" : "Uymayanları çıkar"}
+        </button>
+        {msg && !msg.ok && <span className="text-red-700">{msg.message}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Ayarlar
 // ---------------------------------------------------------------------------
 
@@ -84,7 +123,7 @@ export function SettingsForm({
   editable,
 }: {
   campaign: { id: number; name: string; templateId: number | null; accountId: number | null; perHour: number };
-  templates: { id: number; name: string; format: TemplateFormat }[];
+  templates: { id: number; name: string; format: TemplateFormat; audience: TemplateAudience }[];
   accounts: { id: number; label: string; dailyLimit: number }[];
   editable: boolean;
 }) {
@@ -109,7 +148,7 @@ export function SettingsForm({
             <option value="">— seçin —</option>
             {templates.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.name} {t.format === "html" ? "(HTML)" : ""}
+                {t.name} {t.format === "html" ? "(HTML) " : ""}· {AUDIENCE_SHORT_LABEL[t.audience]}
               </option>
             ))}
           </select>

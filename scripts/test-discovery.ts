@@ -285,6 +285,188 @@ async function main() {
     console.log("wayback sayfaları: geçti");
   }
 
+  // 12) Genel siteler: DNS → ana sayfa platformu → yalnız seçili platformlar eklenir.
+  // Shopify izi Shopify sekmesine aittir (atlanır), DNS'te olmayan ve açılmayan adresler ölü sayılır, .tr dışı elenir.
+  // Popüler siteler (Tranco), alan adında haber/avukat/kamu kelimesi geçenler ve ana sayfası haber/avukat/kamu olanlar elenir.
+  {
+    const { DEFAULT_GENERAL_PLATFORMS } = await import("../src/lib/platform-labels");
+    const { GENERAL_SOURCES, isGeneralSource } = await import("../src/lib/discovery/source-groups");
+    assert.deepEqual(DEFAULT_GENERAL_PLATFORMS, ["nextjs", "react", "angular", "vue", "nuxt", "wordpress"]);
+    assert.ok(isGeneralSource("general_tranco") && !isGeneralSource("tranco"));
+    assert.equal(GENERAL_SOURCES.length, 2);
+
+    type Probe = import("../src/lib/discovery/general-probe").GeneralProbe;
+    const list = [
+      "alfa-web.com.tr",
+      "beta-next.com.tr",
+      "gamma-shop.com.tr",
+      "delta-dead.com.tr",
+      "epsilon-react.com.tr",
+      "zeta-plain.com.tr",
+      "x.com",
+      "populer-site.com.tr", // Tranco'da: elenir
+      "ahmetavukatlik.com.tr", // alan adında avukat: elenir
+      "yerelhaber.com.tr", // alan adında haber: elenir
+      "sekerci.com.tr", // ana sayfası haber sitesi: elenir
+    ];
+    const probed: string[] = [];
+    const dnsAsked: string[] = [];
+    const next = (platform: Probe["platform"], extra: Partial<Probe> = {}): Probe => ({ reachable: true, shopify: false, platform, confidence: "high", language: "tr", segment: null, ...extra });
+    const probes: Record<string, Probe> = {
+      "alfa-web.com.tr": next("nextjs"),
+      "beta-next.com.tr": next("nextjs"),
+      "gamma-shop.com.tr": next("shopify", { shopify: true }),
+      "epsilon-react.com.tr": next("react", { confidence: "medium" }),
+      "zeta-plain.com.tr": next("unknown", { confidence: "low" }),
+      "sekerci.com.tr": next("nextjs", { segment: "news" }),
+    };
+    const unreachable: Probe = { reachable: false, shopify: false, platform: "unknown", confidence: "low", language: null };
+    const probeSite = async (d: string) => {
+      probed.push(d);
+      return probes[d] ?? unreachable;
+    };
+    const popularDomains = async () => ["google.com", "populer-site.com.tr"];
+    const params = { graph: "TEST-G12", tlds: ["tr"], start: 0, limit: list.length, platforms: DEFAULT_GENERAL_PLATFORMS, trOnly: true };
+    const id = createRun("general_ccdomains", params, list.length);
+    db.$client.prepare(`DELETE FROM jobs`).run();
+    await runDiscovery(id, {
+      ...clock,
+      extractDomains: async () => list,
+      popularDomains,
+      hasDns: async (d) => {
+        dnsAsked.push(d);
+        return d !== "delta-dead.com.tr";
+      },
+      probeSite,
+    });
+    const run = getRun(id)!;
+    assert.equal(run.status, "done", run.error ?? "");
+    for (const skipped of ["x.com", "populer-site.com.tr", "ahmetavukatlik.com.tr", "yerelhaber.com.tr"]) {
+      assert.ok(!dnsAsked.includes(skipped), `${skipped}: DNS sorulmamalı`);
+    }
+    assert.deepEqual([...probed].sort(), ["alfa-web.com.tr", "beta-next.com.tr", "epsilon-react.com.tr", "gamma-shop.com.tr", "sekerci.com.tr", "zeta-plain.com.tr"]);
+    assert.equal(run.stats.dead, 1, "DNS'te olmayan delta ölü sayılır");
+    assert.equal(run.stats.shopify, 1, "Shopify izi olan gamma atlanır");
+    assert.equal(run.stats.popular, 1, "popüler site elenir");
+    assert.equal(run.stats.excluded, 3, "alan adında avukat + haber, ana sayfada haber");
+    assert.equal(run.stats.matched, 3, "nextjs ×2 + react eşleşir; unknown seçili değil");
+    assert.equal(run.stats.added, 3);
+    const rows = db.$client.prepare(`SELECT domain FROM stores WHERE source = 'general_ccdomains' ORDER BY domain`).all() as { domain: string }[];
+    assert.deepEqual(rows.map((r) => r.domain), ["alfa-web.com.tr", "beta-next.com.tr", "epsilon-react.com.tr"]);
+
+    // Genel kaynak yeniden çalıştırılınca bilinen adresler atlanır
+    const again = createRun("general_ccdomains", params, list.length);
+    db.$client.prepare(`DELETE FROM jobs`).run();
+    probed.length = 0;
+    await runDiscovery(again, { ...clock, extractDomains: async () => list, popularDomains, hasDns: async () => true, probeSite });
+    const second = getRun(again)!;
+    assert.equal(second.stats.known, 3, "zaten listede olan 3 site");
+    assert.equal(second.stats.added, 0);
+
+    // Popüler site listesi alınamazsa tarama başlamadan durur (filtresiz tarama yapılmaz)
+    const noList = createRun("general_ccdomains", { ...params, graph: "TEST-G12B" }, list.length);
+    db.$client.prepare(`DELETE FROM jobs`).run();
+    await runDiscovery(noList, {
+      ...clock,
+      extractDomains: async () => list,
+      popularDomains: async () => {
+        throw new Error("ağ yok");
+      },
+      hasDns: async () => true,
+      probeSite,
+    });
+    const failed = getRun(noList)!;
+    assert.equal(failed.status, "failed");
+    assert.match(failed.error ?? "", /Popüler site listesi/);
+    console.log("genel siteler: geçti");
+  }
+
+  // 13) Genel Common Crawl taraması: liste alfabetik gelir; avukat/kamu uzantıları elenir, sıra sabit tohumla karışır,
+  // art arda dilimler çakışmaz ve tek uzantı bloğu taramayı doldurmaz.
+  {
+    const { isExcludedSuffix, seededShuffle } = await import("../src/lib/discovery/domain-order");
+    const { DEFAULT_GENERAL_PLATFORMS } = await import("../src/lib/platform-labels");
+    for (const d of ["izmir.bel.tr", "ankara.gov.tr", "ODTU.EDU.TR", "okul.k12.tr", "avukat.av.tr"]) assert.ok(isExcludedSuffix(d), d);
+    for (const d of ["firma.com.tr", "belediye.com.tr", "dernek.org.tr", "ornek.tr"]) assert.ok(!isExcludedSuffix(d), d);
+
+    const lawyers = Array.from({ length: 60 }, (_, i) => `avukat${String(i).padStart(2, "0")}.av.tr`);
+    const councils = Array.from({ length: 20 }, (_, i) => `belediye${i}.bel.tr`);
+    const others = Array.from({ length: 40 }, (_, i) => `site${String(i).padStart(2, "0")}.com.tr`);
+    const orgs = Array.from({ length: 40 }, (_, i) => `dernek${String(i).padStart(2, "0")}.org.tr`);
+    const alphabetical = [...lawyers, ...councils, ...others, ...orgs];
+
+    const a = seededShuffle(alphabetical, "G1");
+    assert.deepEqual(a, seededShuffle(alphabetical, "G1"), "aynı tohum aynı sırayı vermeli");
+    assert.notDeepEqual(a, seededShuffle(alphabetical, "G2"), "farklı tohum farklı sıra vermeli");
+    assert.deepEqual([...a].sort(), [...alphabetical].sort(), "karıştırma öğe kaybetmemeli");
+    assert.equal(alphabetical[0], lawyers[0], "girdi listesi değişmemeli");
+
+    type Probe = import("../src/lib/discovery/general-probe").GeneralProbe;
+    const dead: Probe = { reachable: false, shopify: false, platform: "unknown", confidence: "low", language: null };
+    const runSlice = async (start: number, limit: number) => {
+      const probed: string[] = [];
+      const id = createRun("general_ccdomains", { graph: "TEST-SHUFFLE", tlds: ["tr"], start, limit, platforms: DEFAULT_GENERAL_PLATFORMS, trOnly: true }, limit);
+      db.$client.prepare(`DELETE FROM jobs`).run();
+      await runDiscovery(id, {
+        ...clock,
+        extractDomains: async () => alphabetical,
+        popularDomains: async () => [],
+        hasDns: async () => true,
+        probeSite: async (d) => {
+          probed.push(d);
+          return dead;
+        },
+      });
+      const run = getRun(id)!;
+      assert.equal(run.status, "done", run.error ?? "");
+      return probed;
+    };
+    const first = await runSlice(0, 40);
+    const second = await runSlice(40, 40);
+    assert.equal(first.length, 40);
+    assert.equal(second.length, 40);
+    assert.ok(![...first, ...second].some((d) => d.endsWith(".bel.tr") || d.endsWith(".av.tr")), "avukat ve belediye siteleri taranmamalı");
+    assert.ok(first.some((d) => d.endsWith(".com.tr")) && first.some((d) => d.endsWith(".org.tr")), "ilk dilim karışık olmalı");
+    assert.equal(first.filter((d) => second.includes(d)).length, 0, "art arda dilimler çakışmamalı");
+    assert.deepEqual([...first, ...second].sort(), [...others, ...orgs].sort(), "kalan 80 alan adı iki dilimde eksiksiz taranmalı");
+    console.log("genel ccdomains sırası: geçti");
+  }
+
+  // 14) Hedef dışı tür tanıma (haber, avukat, kamu): alan adı ve ana sayfa başlığından
+  {
+    const { segmentFromDomain, segmentFromHomepage, homepageHints, segmentForStoredSite } = await import("../src/lib/discovery/segments");
+    const cases: [string, string | null][] = [
+      ["sivashaberin.com.tr", "news"],
+      ["ankaragazetesi.com.tr", "news"],
+      ["yeniavukatlik.com.tr", "legal"],
+      ["ozdemirhukuk.com.tr", "legal"],
+      ["kadikoybelediyesi.com.tr", "public"],
+      ["istanbulvalilik.com.tr", "public"],
+      ["monoterapi.com.tr", null], // "noter" alt dizesi: avukat/noter sınıflanmamalı
+      ["kahvecim.com.tr", null],
+      ["modaevi.com.tr", null],
+      ["newsletter-studio.com.tr", null],
+    ];
+    for (const [d, want] of cases) assert.equal(segmentFromDomain(d), want, d);
+
+    const page = (title: string, extra = "") => segmentFromHomepage(homepageHints(`<html><head><title>${title}</title>${extra}</head><body></body></html>`));
+    assert.equal(page("Yıldız Hukuk Bürosu | Ana Sayfa"), "legal");
+    assert.equal(page("Av. Ayşe Demir - Avukat"), "legal");
+    assert.equal(page("Son Dakika Haberleri - Yerel Gazete"), "news");
+    assert.equal(page("Kartal Belediyesi"), "public");
+    assert.equal(page("Fen İşleri Müdürlüğü"), "public");
+    assert.equal(page("Çiçek Dünyası - Online Çiçek Siparişi"), null);
+    assert.equal(page("Ofis Mobilya | Ankara"), null);
+    assert.equal(page("Anasayfa", `<meta property="og:site_name" content="Sakarya Haber Merkezi">`), "news");
+    assert.equal(page("Anasayfa", `<script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsMediaOrganization","name":"X"}</script>`), "news");
+    // Açıklama metni dikkate alınmaz: e-ticaret açıklamasında "haber" geçebilir
+    assert.equal(page("Mavi Butik", `<meta name="description" content="Kampanyalardan haber alın, hukuk kitapları da var">`), null);
+    // Kayıtlı site (eski kayıt temizliği): alan adı ya da marka adından
+    assert.equal(segmentForStoredSite({ domain: "ornek.com.tr", brandName: "Demir Hukuk Bürosu" }), "legal");
+    assert.equal(segmentForStoredSite({ domain: "ornek.com.tr", brandName: "Ornek Mobilya" }), null);
+    console.log("hedef dışı tür tanıma: geçti");
+  }
+
   console.log("\n✓ tüm keşif kontrolleri geçti");
   db.$client.close();
   for (const f of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) fs.rmSync(f, { force: true });

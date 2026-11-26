@@ -16,7 +16,11 @@
     "analyze": "tsx scripts/analyze.ts",
     "test:campaign": "node --env-file=scripts/test.env --import tsx scripts/test-campaign.ts",
     "test:findings": "tsx scripts/test-findings.ts",
-    "test:discovery": "tsx scripts/test-discovery.ts"
+    "test:platform": "tsx scripts/test-platform.ts",
+    "test:site": "tsx scripts/test-site.ts",
+    "pilot:general": "tsx scripts/pilot-general.ts",
+    "test:discovery": "tsx scripts/test-discovery.ts",
+    "test:filters": "tsx scripts/test-filters.ts"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { countryLabel, fmtInt, priceRange, STATUS_LABEL, timeAgo } from "@/lib/format";
+import { effectivePlatform, PLATFORM_LABEL } from "@/lib/platform-labels";
 import { PAGE_SIZES, serializeFilters, type SortKey, type StoreFilters } from "@/lib/store-filters";
 import type { StoreRow } from "@/lib/stores";
 import { createCampaignAction } from "../campaigns/actions";
@@ -76,6 +77,8 @@ export function StoresTable({
   };
 
   const totalPages = Math.max(1, Math.ceil(total / filters.pageSize));
+  // Ürün/fiyat/kategori/eksik sütunları yalnızca Shopify içindir; "Genel siteler" görünümünde boş kalır, gizlenir.
+  const showShopifyColumns = filters.kind !== "genel";
 
   return (
     <section className="rounded-lg border border-stone-200 bg-white">
@@ -159,15 +162,20 @@ export function StoresTable({
                   <input type="checkbox" aria-label="Sayfadakilerin tümünü seç" checked={pageAllSelected} onChange={togglePage} />
                 </th>
                 <SortTh label="Mağaza" k="brand" filters={filters} href={href} />
+                <th>Platform</th>
                 <th>Durum</th>
                 <th>Mail</th>
-                <th>Eksik</th>
+                {showShopifyColumns && <th>Eksik</th>}
                 <SortTh label="Ülke" k="country" filters={filters} href={href} />
                 <th>Dil</th>
-                <th>Kategori</th>
-                <SortTh label="Ürün" k="products" filters={filters} href={href} align="right" />
-                <SortTh label="Fiyat aralığı" k="price" filters={filters} href={href} />
-                <SortTh label="Son ürün" k="lastProduct" filters={filters} href={href} />
+                {showShopifyColumns && (
+                  <>
+                    <th>Kategori</th>
+                    <SortTh label="Ürün" k="products" filters={filters} href={href} align="right" />
+                    <SortTh label="Fiyat aralığı" k="price" filters={filters} href={href} />
+                    <SortTh label="Son ürün" k="lastProduct" filters={filters} href={href} />
+                  </>
+                )}
                 <SortTh label="TR" k="tr" filters={filters} href={href} align="right" />
               </tr>
             </thead>
@@ -184,6 +192,9 @@ export function StoresTable({
                     </td>
                     <td className="min-w-56">
                       <BrandCell row={r} detailHref={href({}, { detail: String(r.id) })} />
+                    </td>
+                    <td>
+                      <PlatformBadge row={r} />
                     </td>
                     <td>
                       <span
@@ -211,31 +222,37 @@ export function StoresTable({
                         <span className="text-stone-400">{r.status === "done" ? "bulunamadı" : "—"}</span>
                       )}
                     </td>
-                    <td className="max-w-56">
-                      {r.findings === null ? (
-                        <span className="text-stone-300" title="Bu mağaza eksik kontrollerinden önce analiz edildi">
-                          —
-                        </span>
-                      ) : r.findings.length ? (
-                        <span
-                          className="inline-block max-w-full truncate rounded bg-amber-100 px-1.5 py-0.5 align-middle text-xs font-medium text-amber-800"
-                          title={r.findings.map((f) => f.label).join("\n")}
-                        >
-                          {r.findings[0].label}
-                          {r.findings.length > 1 && ` +${r.findings.length - 1}`}
-                        </span>
-                      ) : (
-                        <span className="text-stone-400">yok</span>
-                      )}
-                    </td>
+                    {showShopifyColumns && (
+                      <td className="max-w-56">
+                        {r.findings === null ? (
+                          <span className="text-stone-300" title="Bu mağaza eksik kontrollerinden önce analiz edildi">
+                            —
+                          </span>
+                        ) : r.findings.length ? (
+                          <span
+                            className="inline-block max-w-full truncate rounded bg-amber-100 px-1.5 py-0.5 align-middle text-xs font-medium text-amber-800"
+                            title={r.findings.map((f) => f.label).join("\n")}
+                          >
+                            {r.findings[0].label}
+                            {r.findings.length > 1 && ` +${r.findings.length - 1}`}
+                          </span>
+                        ) : (
+                          <span className="text-stone-400">yok</span>
+                        )}
+                      </td>
+                    )}
                     <td className="whitespace-nowrap">{countryLabel(r.country)}</td>
                     <td className="uppercase">{r.language ?? "—"}</td>
-                    <td className="max-w-44 truncate" title={r.category ?? undefined}>
-                      {r.category ?? "—"}
-                    </td>
-                    <td className="text-right tabular-nums">{fmtInt(r.productCount)}</td>
-                    <td className="whitespace-nowrap tabular-nums">{priceRange(r.priceMin, r.priceMax, r.currency)}</td>
-                    <td className="whitespace-nowrap">{timeAgo(r.lastProductAt, now)}</td>
+                    {showShopifyColumns && (
+                      <>
+                        <td className="max-w-44 truncate" title={r.category ?? undefined}>
+                          {r.category ?? "—"}
+                        </td>
+                        <td className="text-right tabular-nums">{fmtInt(r.productCount)}</td>
+                        <td className="whitespace-nowrap tabular-nums">{priceRange(r.priceMin, r.priceMax, r.currency)}</td>
+                        <td className="whitespace-nowrap">{timeAgo(r.lastProductAt, now)}</td>
+                      </>
+                    )}
                     <td className="text-right">
                       <TrScore value={r.trScore} />
                     </td>
@@ -368,6 +385,33 @@ function BrandCell({ row, detailHref }: { row: StoreRow; detailHref: string }) {
         {row.domain} ↗
       </a>
     </div>
+  );
+}
+
+/** Tespit edilen platform rozeti. Henüz bilinmiyorsa (analiz bekliyor) "—". Düşük güvenli tespitler "?" ile işaretlenir. */
+export function PlatformBadge({ row }: { row: Pick<StoreRow, "platform" | "status" | "source" | "platformEvidence"> }) {
+  const platform = effectivePlatform(row);
+  if (!platform) return <span className="text-stone-300">—</span>;
+
+  const evidence = row.platformEvidence;
+  const isLowConfidence = evidence?.confidence === "low";
+  const title = evidence?.signals.length
+    ? `${isLowConfidence ? "Düşük güven. " : ""}Dayanak: ${evidence.signals.join(", ")}`
+    : platform === "unknown"
+      ? "Ana sayfada bilinen bir platform izi bulunamadı"
+      : undefined;
+  const cls =
+    platform === "shopify"
+      ? "bg-emerald-100 text-emerald-800"
+      : platform === "unknown"
+        ? "bg-stone-100 text-stone-500"
+        : "bg-sky-100 text-sky-800";
+
+  return (
+    <span title={title} className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap ${cls}`}>
+      {platform === "unknown" ? "Bilinmiyor" : PLATFORM_LABEL[platform]}
+      {isLowConfidence && platform !== "unknown" && "?"}
+    </span>
   );
 }
 

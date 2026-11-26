@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { TEMPLATE_FORMATS, type TemplateFormat } from "@/db/schema";
+import { TEMPLATE_AUDIENCES, TEMPLATE_FORMATS, type TemplateAudience, type TemplateFormat } from "@/db/schema";
 import type { FormState } from "@/components/ui";
 import { cleanEmail } from "@/lib/analyzer/emails";
 import { sendTest } from "@/lib/campaigns";
@@ -10,9 +10,11 @@ import { createTemplate, deleteTemplate, duplicateTemplate, updateTemplate, type
 
 function validate(raw: TemplateInput): TemplateInput | string {
   const format = (TEMPLATE_FORMATS as readonly string[]).includes(raw.format) ? (raw.format as TemplateFormat) : "text";
+  const audience = (TEMPLATE_AUDIENCES as readonly string[]).includes(raw.audience) ? (raw.audience as TemplateAudience) : "all";
   const input: TemplateInput = {
     name: String(raw.name ?? "").trim().slice(0, 120),
     format,
+    audience,
     subject: String(raw.subject ?? "").trim().slice(0, 300),
     bodyText: String(raw.bodyText ?? ""),
     bodyHtml: raw.bodyHtml === null ? null : String(raw.bodyHtml ?? ""),
@@ -25,7 +27,7 @@ function validate(raw: TemplateInput): TemplateInput | string {
 }
 
 export async function createTemplateAction() {
-  const { id } = createTemplate({ name: "Yeni şablon", format: "text", subject: "{{marka}} hakkında", bodyText: "Merhaba {{marka}} ekibi,\n\n\n\nİyi çalışmalar.\n\n{{imza}}", bodyHtml: null });
+  const { id } = createTemplate({ name: "Yeni şablon", format: "text", audience: "all", subject: "{{marka}} hakkında", bodyText: "Merhaba {{marka}} ekibi,\n\n\n\nİyi çalışmalar.\n\n{{imza}}", bodyHtml: null });
   redirect(`/templates/${id}`);
 }
 

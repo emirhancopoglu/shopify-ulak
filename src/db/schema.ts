@@ -25,6 +25,30 @@ export const STORE_STATUSES = [
 ] as const;
 export type StoreStatus = (typeof STORE_STATUSES)[number];
 
+/** Sitenin yazılım platformu (F6). "unknown" = sinyal bulunamadı; null = henüz tespit edilmedi. */
+export const PLATFORMS = [
+  "shopify",
+  "nextjs",
+  "react",
+  "angular",
+  "vue",
+  "nuxt",
+  "wordpress",
+  "wix",
+  "webflow",
+  "ticimax",
+  "ikas",
+  "ideasoft",
+  "unknown",
+] as const;
+export type Platform = (typeof PLATFORMS)[number];
+
+export const PLATFORM_CONFIDENCES = ["high", "medium", "low"] as const;
+export type PlatformConfidence = (typeof PLATFORM_CONFIDENCES)[number];
+
+/** Platform tespitinin dayanakları (kullanıcıya gösterilir, hata ayıklamada kullanılır). */
+export type PlatformEvidence = { confidence: PlatformConfidence; signals: string[] };
+
 export const stores = sqliteTable(
   "stores",
   {
@@ -35,6 +59,9 @@ export const stores = sqliteTable(
     status: text("status", { enum: STORE_STATUSES }).notNull().default("pending"),
     error: text("error"),
     source: text("source").notNull().default("manual"),
+    /** Yazılım platformu (F6). null = henüz tespit edilmedi. */
+    platform: text("platform", { enum: PLATFORMS }),
+    platformEvidence: text("platform_evidence", { mode: "json" }).$type<PlatformEvidence>(),
 
     brandName: text("brand_name"), // meta.json'dan otomatik
     brandNameOverride: text("brand_name_override"), // elle düzeltilmiş
@@ -118,10 +145,19 @@ export const kv = sqliteTable("kv", {
 export const TEMPLATE_FORMATS = ["text", "html"] as const;
 export type TemplateFormat = (typeof TEMPLATE_FORMATS)[number];
 
+/**
+ * Şablonun hedef kitlesi (F6 Faz 5). Kampanya, uymayan alıcılar kuyruktayken başlatılamaz:
+ * Shopify tanıtım metni Next.js/WordPress sitesine gitmesin diye.
+ * all = herkese uyar · shopify · general (Shopify dışı tüm siteler) · js (Next.js/React/Angular/Vue/Nuxt) · wordpress
+ */
+export const TEMPLATE_AUDIENCES = ["all", "shopify", "general", "js", "wordpress"] as const;
+export type TemplateAudience = (typeof TEMPLATE_AUDIENCES)[number];
+
 export const templates = sqliteTable("templates", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   format: text("format", { enum: TEMPLATE_FORMATS }).notNull().default("text"),
+  audience: text("audience", { enum: TEMPLATE_AUDIENCES }).notNull().default("all"),
   subject: text("subject").notNull(),
   /** Düz metin gövde (format=text) ya da HTML'in düz metin alternatifi (boşsa HTML'den üretilir). */
   bodyText: text("body_text").notNull().default(""),
@@ -216,7 +252,8 @@ export const suppression = sqliteTable("suppression", {
 // Keşif (F4)
 // ---------------------------------------------------------------------------
 
-export const DISCOVERY_SOURCES = ["search", "commoncrawl", "dns", "ccdomains", "tranco", "wayback"] as const;
+/** Shopify kaynakları ilk 6; genel site kaynakları (F6 Faz 3) son 2. Gruplar src/lib/discovery/source-groups.ts'te. */
+export const DISCOVERY_SOURCES = ["search", "commoncrawl", "dns", "ccdomains", "tranco", "wayback", "general_ccdomains", "general_tranco"] as const;
 export type DiscoverySource = (typeof DISCOVERY_SOURCES)[number];
 export const DISCOVERY_STATUSES = ["queued", "running", "done", "failed", "cancelled", "blocked"] as const;
 export type DiscoveryStatus = (typeof DISCOVERY_STATUSES)[number];
@@ -229,6 +266,12 @@ export type DiscoveryStats = {
   shopify: number; // Shopify olduğu doğrulanan
   matched: number; // filtreye uyan (ör. Türk)
   added: number; // listeye eklenen
+  /** Genel site kaynakları: DNS'te yok ya da ana sayfa açılmadı */
+  dead?: number;
+  /** Genel site kaynakları: popüler (Tranco ilk 1 milyon) olduğu için elenen */
+  popular?: number;
+  /** Genel site kaynakları: hedef dışı tür (haber, avukat, kamu) olduğu için elenen */
+  excluded?: number;
   /** Otomatik bekleme bitişi (ms). Doluysa çalıştırma bekliyor; worker yeniden başlasa da süre korunur. */
   waitUntil?: number | null;
   waitReason?: string | null;
