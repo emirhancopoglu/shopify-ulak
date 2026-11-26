@@ -5,6 +5,7 @@ import type { FormState } from "@/components/ui";
 import { createGmailAccount, createSmtpAccount, deleteAccount, getAccount, updateAccount } from "@/lib/accounts";
 import { cleanEmail } from "@/lib/analyzer/emails";
 import { classifySendError, LIST_UNSUBSCRIBE_KEY } from "@/lib/mailer";
+import { saveEmailFooter } from "@/lib/email-footer";
 import { CLIENT_ID_KEY } from "@/lib/outlook";
 import { setSetting } from "@/lib/settings";
 import { suppress, unsuppress } from "@/lib/suppression";
@@ -121,6 +122,14 @@ export async function saveOutlookClientIdAction(_prev: FormState, fd: FormData):
   setSetting(CLIENT_ID_KEY, clientId.toLowerCase());
   refresh();
   return { ok: true, message: "Client ID kaydedildi. Şimdi \"Outlook hesabı bağla\"ya tıklayın." };
+}
+
+/** Tüm maillerin altına eklenecek HTML alt bilgiyi kaydeder (boş = kaldır). */
+export async function saveEmailFooterAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  const result = saveEmailFooter(String(fd.get("footerHtml") ?? ""));
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true, message: String(fd.get("footerHtml") ?? "").trim() ? "Alt bilgi kaydedildi; bundan sonraki tüm maillere eklenir." : "Alt bilgi kaldırıldı." };
 }
 
 export async function setListUnsubscribeAction(enabled: boolean) {

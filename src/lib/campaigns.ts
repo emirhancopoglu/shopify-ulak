@@ -4,6 +4,7 @@ import type { Campaign, CampaignRecipient, Platform, RecipientStatus, Store, Tem
 import { DAY_MS, getAccount, sentInLast24h, setAccountError } from "@/lib/accounts";
 import { countryName } from "@/lib/format";
 import { classifySendError, sendEmail } from "@/lib/mailer";
+import { getEmailFooter } from "@/lib/email-footer";
 import { effectivePlatform, PLATFORM_LABEL, siteKind } from "@/lib/platform-labels";
 import { isSuppressed, suppress } from "@/lib/suppression";
 import { AUDIENCE_LABEL, audienceAccepts } from "@/lib/template-audience";
@@ -194,7 +195,7 @@ export function previewRecipient(campaignId: number, recipientId?: number): { re
     : (db.select().from(recipients).where(and(eq(recipients.campaignId, campaignId), eq(recipients.status, "queued"))).orderBy(asc(recipients.position)).get() ??
       db.select().from(recipients).where(eq(recipients.campaignId, campaignId)).orderBy(asc(recipients.position)).get());
   if (!r) return null;
-  return { recipient: r, email: renderEmail(content, varsFor(c, r)) };
+  return { recipient: r, email: renderEmail(content, varsFor(c, r), { footerHtml: getEmailFooter() }) };
 }
 
 /** Başlatmadan önce: kuyruktaki alıcılardan kaçında doldurulamayan değişken var? */
@@ -457,7 +458,7 @@ async function sendNext(c: Campaign, now: number, sendFn: typeof sendEmail) {
   }
 
   const content: EmailContent = { format: c.format ?? "text", subject: c.subject ?? "", bodyText: c.bodyText ?? "", bodyHtml: c.bodyHtml };
-  const rendered = renderEmail(content, varsFor(c, r));
+  const rendered = renderEmail(content, varsFor(c, r), { footerHtml: getEmailFooter() });
 
   db.update(recipients)
     .set({ status: "sending", attempts: r.attempts + 1 })
@@ -516,7 +517,7 @@ export async function sendTest(
 ) {
   const account = getAccount(accountId);
   if (!account) throw new Error("Hesap bulunamadı.");
-  const rendered = renderEmail(content, { ...vars, imza: account.signature, gonderen: account.fromName });
+  const rendered = renderEmail(content, { ...vars, imza: account.signature, gonderen: account.fromName }, { footerHtml: getEmailFooter() });
   try {
     await sendEmail(account, { to, subject: opts.prefix === false ? rendered.subject : `[TEST] ${rendered.subject}`, text: rendered.text, html: rendered.html });
   } catch (err) {

@@ -3,10 +3,12 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { ui } from "@/components/ui";
 import { listAccounts } from "@/lib/accounts";
+import { getEmailFooter } from "@/lib/email-footer";
 import { listUnsubscribeEnabled } from "@/lib/mailer";
 import { CALLBACK_PATH, getOutlookClientId, outlookClientIdFromEnv } from "@/lib/outlook";
 import { listSuppression } from "@/lib/suppression";
 import { AccountCard, NewAccountForm, NewSmtpAccountForm } from "./account-forms";
+import { EmailFooterSection } from "./email-footer-section";
 import { OutlookSetup } from "./outlook-setup";
 import { SendingOptions } from "./sending-options";
 import { SuppressionSection } from "./suppression-section";
@@ -67,6 +69,8 @@ async function SettingsContent({ searchParams }: { searchParams: PageProps<"/set
         <NewSmtpAccountForm />
         <OutlookSetup clientId={clientId} fromEnv={Boolean(outlookClientIdFromEnv())} redirectUri={redirectUri} />
       </section>
+
+      <EmailFooterSection footerHtml={getEmailFooter() ?? ""} />
 
       <SendingOptions listUnsubscribe={listUnsubscribeEnabled()} />
 
