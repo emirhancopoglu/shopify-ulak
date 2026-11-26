@@ -5,11 +5,16 @@ import { normalizeDomain } from "@/lib/domains";
 import { addStores } from "@/lib/stores";
 import { numPages, pageHosts, saveNextPage } from "./commoncrawl";
 import { ddgSearch } from "./ddg";
+import { isExcludedSuffix, seededShuffle } from "./domain-order";
+import { segmentFromDomain } from "./segments";
 import { extractTldDomains, readCachedList, type ExtractProgress } from "./domainlist";
-import { trancoDomains } from "./tranco";
+import { popularDomains, trancoDomains } from "./tranco";
 import { saveWaybackNextPage, waybackPageCount, waybackPageHosts } from "./wayback";
-import { looksLikeShopify } from "./dns";
+import { hasARecord, looksLikeShopify } from "./dns";
+import { probeSite, type GeneralProbe } from "./general-probe";
 import { isTurkish, probeStore } from "./probe";
+import { DEFAULT_GENERAL_PLATFORMS } from "@/lib/platform-labels";
+import type { Platform } from "@/db/schema";
 import { appendLog, getRun, isCancelled, saveStats, setRunStatus } from "./runs";
 
 /**
@@ -29,6 +34,10 @@ export async function runDiscovery(runId: number, deps: Partial<RunnerDeps> = {}
     else if (run.source === "ccdomains") await runCcDomains(ctx);
     else if (run.source === "tranco") await runTranco(ctx);
     else if (run.source === "wayback") await runWayback(ctx);
+    else if (run.source === "general_ccdomains") await runGeneralCcDomains(ctx);
+    else if (run.source === "general_tranco") {
+      ctx.stop("failed", "Bu kaynak kaldırıldı: popüler siteler artık genel taramadan elenir. Alan adı arşivi (.tr) kaynağını kullanın.");
+    }
     if (ctx.stopped) return; // iptal/engel durumu zaten yazıldı
     ctx.save();
     setRunStatus(runId, "done");
@@ -50,6 +59,8 @@ const SOURCE_TAG: Record<DiscoveryRun["source"], string> = {
   ccdomains: "ccdomains",
   tranco: "tranco",
   wayback: "wayback",
+  general_ccdomains: "general_ccdomains",
+  general_tranco: "general_tranco",
 };
 
 /** Testlerde ağ ve saat yerine sahte sürümler verilebilsin diye. */
@@ -60,6 +71,12 @@ export type RunnerDeps = {
   trancoList: (listId: string) => Promise<string[]>;
   waybackPages: () => Promise<number>;
   waybackHosts: (page: number) => Promise<string[]>;
+  /** Genel siteler: alan adının IP kaydı var mı */
+  hasDns: (domain: string) => Promise<boolean>;
+  /** Genel siteler: ana sayfanın platformu */
+  probeSite: (domain: string) => Promise<GeneralProbe>;
+  /** Genel siteler: elenecek popüler siteler (Tranco ilk 1 milyon) */
+  popularDomains: () => Promise<string[]>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
 };
@@ -71,6 +88,9 @@ const defaultDeps: RunnerDeps = {
   trancoList: (listId) => trancoDomains(listId),
   waybackPages: waybackPageCount,
   waybackHosts: waybackPageHosts,
+  hasDns: hasARecord,
+  probeSite,
+  popularDomains,
   now: () => Date.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 };
@@ -392,11 +412,18 @@ async function dnsSweep(ctx: Context, domains: string[], opts: { batch?: number;
 // ---------------------------------------------------------------------------
 
 async function runCcDomains(ctx: Context) {
+  const domains = await loadTrList(ctx);
+  if (domains === null) return;
+  await dnsSweep(ctx, domains, { logEvery: 5000 });
+}
+
+/** Common Crawl alan adı listesi (önbellek ya da ilk indirme). İptal ya da hatada null; durum zaten yazılmıştır. */
+async function loadTrList(ctx: Context): Promise<string[] | null> {
   const graph = String(ctx.run.params.graph);
   const tlds = (ctx.run.params.tlds as string[]) ?? ["tr"];
   const tldLabel = tlds.map((t) => `.${t}`).join(", ");
 
-  if (!(await ctx.finishPendingWait())) return;
+  if (!(await ctx.finishPendingWait())) return null;
   let domains = readCachedList(graph, tlds);
   if (domains && ctx.stats.cursor === 0) ctx.log(`Daha önce indirilen liste kullanılıyor: ${domains.length} ${tldLabel} alan adı.`);
   if (!domains) {
@@ -423,16 +450,17 @@ async function runCcDomains(ctx: Context) {
       "Common Crawl yoğun, tekrar denenecek",
     );
     ctx.stats.note = null;
-    if (res === null) return;
+    if (res === null) return null;
     if ("error" in res) {
-      return ctx.stop("failed", `Alan adı listesi indirilemedi (${describeError(res.error)}). Sonra "Devam ettir" ile tekrar deneyin.`);
+      ctx.stop("failed", `Alan adı listesi indirilemedi (${describeError(res.error)}). Sonra "Devam ettir" ile tekrar deneyin.`);
+      return null;
     }
-    if (res.value === null) return; // iptal
+    if (res.value === null) return null; // iptal
     domains = res.value;
     ctx.save();
-    ctx.log(`${domains.length} ${tldLabel} alan adı bulundu; DNS ile Shopify kontrolü başlıyor.`);
+    ctx.log(`${domains.length} ${tldLabel} alan adı bulundu; DNS ile kontrol başlıyor.`);
   }
-  await dnsSweep(ctx, domains, { logEvery: 5000 });
+  return domains;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,18 +468,26 @@ async function runCcDomains(ctx: Context) {
 // ---------------------------------------------------------------------------
 
 async function runTranco(ctx: Context) {
+  const slice = await trancoSlice(ctx);
+  if (slice === null) return;
+  await dnsSweep(ctx, slice, { logEvery: 5000 });
+}
+
+/** Tranco listesinden çalıştırmanın dilimini alır. İptal ya da hatada null. */
+async function trancoSlice(ctx: Context): Promise<string[] | null> {
   const listId = String(ctx.run.params.listId);
   const start = Number(ctx.run.params.start ?? 0);
   const limit = Number(ctx.run.params.limit ?? 100_000);
 
   const res = await ctx.retrying(() => ctx.deps.trancoList(listId), ERROR_WAITS_MS, "Tranco listesi indirilemedi", "Bağlantı hatası, tekrar denenecek");
-  if (res === null) return;
+  if (res === null) return null;
   if ("error" in res) {
-    return ctx.stop("failed", `Tranco listesi indirilemedi (${describeError(res.error)}). Sonra "Devam ettir" ile tekrar deneyin.`);
+    ctx.stop("failed", `Tranco listesi indirilemedi (${describeError(res.error)}). Sonra "Devam ettir" ile tekrar deneyin.`);
+    return null;
   }
   const slice = res.value.slice(start, start + limit);
-  if (ctx.stats.cursor === 0) ctx.log(`Tranco ${listId}: ${start + 1}–${start + slice.length}. sıradaki ${slice.length} site DNS ile kontrol edilecek.`);
-  await dnsSweep(ctx, slice, { logEvery: 5000 });
+  if (ctx.stats.cursor === 0) ctx.log(`Tranco ${listId}: ${start + 1}–${start + slice.length}. sıradaki ${slice.length} site kontrol edilecek.`);
+  return slice;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,5 +535,146 @@ async function runWayback(ctx: Context) {
     saveWaybackNextPage(page + 1);
     ctx.log(`Sayfa ${page}: ${hosts.length} mağaza tarandı, ${ctx.stats.added - before} yeni eklendi.`);
     if (ctx.stats.cursor < ctx.stats.total && !(await ctx.wait(jitter(...WAYBACK_GAP_MS)))) return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Genel siteler (F6 Faz 3): alan adı → DNS → ana sayfa platformu → seçili platformlar eklenir
+// ---------------------------------------------------------------------------
+
+/** Genel kaynakların DNS ve HTTP eşzamanlılığı. HTTP tarafı nazik kalsın diye düşük. */
+const GENERAL_DNS_CONCURRENCY = 32;
+const GENERAL_PROBE_CONCURRENCY = 12;
+const GENERAL_BATCH = 200;
+
+async function runGeneralCcDomains(ctx: Context) {
+  const domains = await loadTrList(ctx);
+  if (domains === null) return;
+  const popular = await loadPopular(ctx);
+  if (popular === null) return;
+  // Liste alfabetik; sıralı dilimler tek uzantı bloğuna (.av.tr, .bel.tr…) takılıyordu. Hedef dışı uzantılar elenir,
+  // kalan liste graph kimliğiyle sabit tohumdan karıştırılır (aynı dilim hep aynı siteleri verir, devam ettirme bozulmaz).
+  // Popüler siteler ve haber/avukat/kamu adları dilimden SONRA elenir: popülerlik listesi günlük değişir, sıra değişmemeli.
+  const ordered = seededShuffle(
+    domains.filter((d) => !isExcludedSuffix(d)),
+    String(ctx.run.params.graph),
+  );
+  const start = Number(ctx.run.params.start ?? 0);
+  const limit = Number(ctx.run.params.limit ?? ordered.length);
+  const slice = ordered.slice(start, start + limit);
+  if (ctx.stats.cursor === 0) {
+    ctx.log(
+      `${start + 1}–${start + slice.length}. sıradaki ${slice.length} alan adı genel site taramasından geçecek (karışık sıra; avukat/kamu uzantıları elendi: ${domains.length - ordered.length}; popüler site listesi: ${popular.size.toLocaleString("tr-TR")}).`,
+    );
+  }
+  await generalSweep(ctx, slice, popular);
+}
+
+/** Popüler siteler (Tranco ilk 1 milyon). İptal ya da hatada null; durum zaten yazılmıştır. */
+async function loadPopular(ctx: Context): Promise<Set<string> | null> {
+  const res = await ctx.retrying(() => ctx.deps.popularDomains(), ERROR_WAITS_MS, "Popüler site listesi alınamadı", "Bağlantı hatası, tekrar denenecek");
+  if (res === null) return null;
+  if ("error" in res) {
+    ctx.stop("failed", `Popüler site listesi (Tranco) alınamadı (${describeError(res.error)}). Sonra "Devam ettir" ile tekrar deneyin.`);
+    return null;
+  }
+  return new Set(res.value.map((d) => d.toLowerCase()));
+}
+
+/** Havuz: `items` üzerinde en fazla `size` eşzamanlı `fn` çalıştırır. */
+async function pool<T>(items: T[], size: number, fn: (item: T) => Promise<void>) {
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(size, items.length) }, async () => {
+      while (i < items.length) await fn(items[i++]);
+    }),
+  );
+}
+
+/**
+ * Alan adlarını genel site olarak süzer. Sırası: Türkiye filtresi (.tr) → zaten listede → DNS (IP kaydı) →
+ * ana sayfa (platform, Shopify değil, seçili platformlardan biri). Eşleşenler mağaza kuyruğuna (analiz) eklenir.
+ * İmleç her partide kaydedilir; yarıda kalırsa oradan sürer.
+ */
+async function generalSweep(ctx: Context, domains: string[], popular: Set<string>) {
+  const wanted = new Set<Platform>((ctx.run.params.platforms as Platform[] | undefined) ?? DEFAULT_GENERAL_PLATFORMS);
+  const LOG_EVERY = 2000;
+  ctx.stats.total = domains.length;
+  ctx.stats.dead = ctx.stats.dead ?? 0;
+  let nextLog = ctx.stats.cursor + LOG_EVERY;
+  let sinceLog = { added: ctx.stats.added, matched: ctx.stats.matched };
+
+  while (ctx.stats.cursor < domains.length) {
+    if (ctx.cancelled()) return;
+    const batch = domains.slice(ctx.stats.cursor, ctx.stats.cursor + GENERAL_BATCH);
+
+    // Hedef dışı elemeler (ağ isteğinden önce): avukat/kamu uzantısı, popüler site, alan adında haber/avukat/kamu kelimesi
+    const hosts: string[] = [];
+    for (const h of batch.map((d) => normalizeDomain(d) ?? d).filter((x) => !ctx.trOnly || x.endsWith(".tr"))) {
+      if (isExcludedSuffix(h) || segmentFromDomain(h)) ctx.stats.excluded = (ctx.stats.excluded ?? 0) + 1;
+      else if (popular.has(h)) ctx.stats.popular = (ctx.stats.popular ?? 0) + 1;
+      else hosts.push(h);
+    }
+    const fresh: string[] = [];
+    for (const h of hosts) {
+      if (storeExists(h)) ctx.stats.known++;
+      else fresh.push(h);
+    }
+    ctx.stats.candidates += fresh.length;
+
+    // 1) DNS: IP kaydı olmayanlar (park edilmemiş, ölü) elenir
+    const withDns: string[] = [];
+    await pool(fresh, GENERAL_DNS_CONCURRENCY, async (h) => {
+      try {
+        if (await ctx.deps.hasDns(h)) withDns.push(h);
+        else ctx.stats.dead = (ctx.stats.dead ?? 0) + 1;
+      } catch {
+        ctx.stats.dead = (ctx.stats.dead ?? 0) + 1;
+      }
+    });
+
+    // 2) Ana sayfa: Shopify izi varsa atlanır (Shopify sekmesine ait), açılmıyorsa ölü, değilse platform filtresi
+    const toAdd: string[] = [];
+    await pool(withDns, GENERAL_PROBE_CONCURRENCY, async (h) => {
+      let probe: GeneralProbe;
+      try {
+        probe = await ctx.deps.probeSite(h);
+      } catch {
+        ctx.stats.dead = (ctx.stats.dead ?? 0) + 1;
+        return;
+      }
+      if (!probe.reachable) {
+        ctx.stats.dead = (ctx.stats.dead ?? 0) + 1;
+        return;
+      }
+      if (probe.shopify) {
+        ctx.stats.shopify++;
+        return;
+      }
+      // Ana sayfa başlığı/site adı/JSON-LD haber, avukat ya da kamu sitesi diyorsa hedef dışı
+      if (probe.segment) {
+        ctx.stats.excluded = (ctx.stats.excluded ?? 0) + 1;
+        return;
+      }
+      if (!wanted.has(probe.platform)) return;
+      ctx.stats.matched++;
+      toAdd.push(h);
+    });
+
+    if (toAdd.length) {
+      const { added } = addStores([...new Set(toAdd)], SOURCE_TAG[ctx.run.source]);
+      ctx.stats.added += added;
+    }
+
+    ctx.stats.cursor += batch.length;
+    ctx.save();
+
+    if (ctx.stats.cursor >= nextLog || ctx.stats.cursor >= domains.length) {
+      ctx.log(
+        `${ctx.stats.cursor}/${domains.length} tarandı: ${ctx.stats.matched - sinceLog.matched} platform eşleşti, ${ctx.stats.added - sinceLog.added} yeni eklendi.`,
+      );
+      nextLog = ctx.stats.cursor + LOG_EVERY;
+      sinceLog = { added: ctx.stats.added, matched: ctx.stats.matched };
+    }
   }
 }

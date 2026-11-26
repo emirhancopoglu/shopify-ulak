@@ -31,7 +31,11 @@ const BLOCKED_LOCALPARTS = /^(name|your|yourname|email|adiniz|isim|test|noreply|
 const PREFERRED_LOCALPARTS =
   /^(info|bilgi|iletisim|contact|hello|merhaba|selam|destek|support|sales|satis|musterihizmetleri|customerservice|customer|cs|shop|store|magaza|siparis|order|orders|team|hi)$/i;
 
-const AVOID_LOCALPARTS = /^(kvkk|privacy|gizlilik|legal|hukuk|abuse|dmca|iade|returns|refund|career|kariyer|ik|hr|jobs|muhasebe|fatura|accounting)$/i;
+/**
+ * Satış/iletişim maili için uygun olmayan adresler: KVKK/gizlilik, hukuk, şikayet, kariyer, iade, muhasebe.
+ * Aday listesinden tamamen çıkarılır (birincil seçilemez, yedek olarak da kullanılmaz).
+ */
+const NON_SALES_LOCALPARTS = /^(kvkk|privacy|gizlilik|legal|hukuk|abuse|dmca|iade|returns|refund|career|kariyer|ik|hr|jobs|muhasebe|fatura|accounting)$/i;
 
 export function cleanEmail(raw: string): string | null {
   let e = raw.trim().toLowerCase();
@@ -48,6 +52,7 @@ export function cleanEmail(raw: string): string | null {
   const [local, domain] = e.split("@");
   if (FILE_EXT_RE.test(e)) return null;
   if (BLOCKED_LOCALPARTS.test(local)) return null;
+  if (NON_SALES_LOCALPARTS.test(local)) return null;
   if (BLOCKED_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return null;
   return e;
 }
@@ -89,7 +94,6 @@ export function rankEmail(email: string, storeHost: string): number {
   let score = 0;
   if (sameSite(domain, storeHost)) score += 10;
   if (PREFERRED_LOCALPARTS.test(local)) score += 5;
-  if (AVOID_LOCALPARTS.test(local)) score -= 4;
   if (/^(gmail|hotmail|outlook|yahoo|yandex|icloud)\./.test(domain)) score += 1;
   return score;
 }

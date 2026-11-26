@@ -2,7 +2,9 @@
 
 import { refresh } from "next/cache";
 import type { FormState } from "@/components/ui";
+import type { Platform } from "@/db/schema";
 import { describeError } from "@/lib/analyzer/http";
+import { isGeneralPlatform } from "@/lib/platform-labels";
 import { buildQueries, VARIATIONS } from "@/lib/discovery/ddg";
 import { latestGraph } from "@/lib/discovery/domainlist";
 import { latestTrancoId, TRANCO_SIZE } from "@/lib/discovery/tranco";
@@ -86,6 +88,32 @@ export async function startWaybackAction(_prev: FormState, fd: FormData): Promis
   createRun("wayback", { startPage, pageCount, trOnly: fd.get("trOnly") === "on" }, pageCount);
   refresh();
   return { ok: true, message: `Wayback: ${startPage}. sayfadan itibaren ${pageCount} sayfa taranacak.` };
+}
+
+// ---------------------------------------------------------------------------
+// Genel siteler (F6 Faz 3)
+// ---------------------------------------------------------------------------
+
+/** Formdan gelen platform seçimleri (yalnızca izinli değerler). */
+function parsePlatforms(fd: FormData): Platform[] {
+  return fd.getAll("platforms").map(String).filter(isGeneralPlatform);
+}
+
+export async function startGeneralCcDomainsAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  if (hasActiveRun("general_ccdomains")) return { ok: false, message: ACTIVE_MSG };
+  const platforms = parsePlatforms(fd);
+  if (platforms.length === 0) return { ok: false, message: "En az bir platform seçin." };
+  let graph: string;
+  try {
+    graph = await latestGraph();
+  } catch (err) {
+    return { ok: false, message: `Common Crawl'a ulaşılamadı (${describeError(err)}). Biraz sonra tekrar deneyin.` };
+  }
+  const start = Math.max(0, Math.floor(Number(fd.get("start")) || 0));
+  const limit = Math.min(500_000, Math.max(1000, Math.floor(Number(fd.get("limit")) || 20_000)));
+  createRun("general_ccdomains", { graph, tlds: ["tr"], start, limit, platforms, trOnly: true }, limit);
+  refresh();
+  return { ok: true, message: `${graph}: ${start + 1}. alan adından itibaren ${limit.toLocaleString("tr-TR")} .tr alan adı genel site olarak taranacak.` };
 }
 
 const isId = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0;

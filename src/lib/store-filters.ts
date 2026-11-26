@@ -2,7 +2,11 @@
  * Mağaza listesi filtreleri. URL query string'inde tutulur (paylaşılabilir, yenilemede kaybolmaz).
  * Bu dosya hem sunucu hem tarayıcı tarafında kullanılır; veritabanı import'u içermemeli.
  */
-import { STORE_STATUSES, type StoreStatus } from "@/db/schema";
+import { PLATFORMS, STORE_STATUSES, type Platform, type StoreStatus } from "@/db/schema";
+
+/** Tür: Shopify mağazaları ya da Shopify dışındaki genel siteler (URL: ?tip=shopify | genel). */
+export const KIND_FILTERS = ["shopify", "genel"] as const;
+export type KindFilter = (typeof KIND_FILTERS)[number];
 
 export const SORT_KEYS = ["tr", "brand", "products", "lastProduct", "created", "country", "price"] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
@@ -21,6 +25,10 @@ export const PAGE_SIZES = [50, 100, 200] as const;
 
 export type StoreFilters = {
   q?: string;
+  /** Shopify mağazası mı, genel site mi */
+  kind?: KindFilter;
+  /** Tespit edilen platform (nextjs, wordpress, shopify…). Eski Shopify kayıtları "shopify" sayılır. */
+  platform?: Platform[];
   status?: StoreStatus[];
   country?: string[];
   language?: string[];
@@ -71,6 +79,8 @@ export function parseFilters(p: Params): StoreFilters {
   const pageSize = num(p, "size");
   return {
     q: get(p, "q"),
+    kind: oneOf(KIND_FILTERS, get(p, "tip")),
+    platform: list(p, "platform")?.filter((s): s is Platform => (PLATFORMS as readonly string[]).includes(s)),
     status: list(p, "status")?.filter((s): s is StoreStatus => (STORE_STATUSES as readonly string[]).includes(s)),
     country: list(p, "country")?.map((c) => c.toUpperCase()),
     language: list(p, "lang")?.map((c) => c.toLowerCase()),
@@ -101,6 +111,8 @@ export function serializeFilters(f: Partial<StoreFilters>): URLSearchParams {
     if (v?.length) p.set(k, v.join(","));
   };
   set("q", f.q);
+  set("tip", f.kind);
+  setList("platform", f.platform);
   setList("status", f.status);
   setList("country", f.country);
   setList("lang", f.language);
@@ -126,6 +138,8 @@ export function serializeFilters(f: Partial<StoreFilters>): URLSearchParams {
 export function activeFilterCount(f: StoreFilters): number {
   return [
     f.q,
+    f.kind,
+    f.platform?.length,
     f.status?.length,
     f.country?.length,
     f.language?.length,

@@ -11,10 +11,13 @@ import {
   startCcDomainsAction,
   startCommonCrawlAction,
   startDnsAction,
+  startGeneralCcDomainsAction,
   startSearchAction,
   startTrancoAction,
   startWaybackAction,
 } from "./actions";
+import { DEFAULT_GENERAL_PLATFORMS, GENERAL_PLATFORM_CHOICES, PLATFORM_LABEL } from "@/lib/platform-labels";
+import { isGeneralSource } from "@/lib/discovery/source-groups";
 
 const SOURCE_LABEL: Record<DiscoveryRun["source"], string> = {
   search: "Arama (DuckDuckGo)",
@@ -23,6 +26,8 @@ const SOURCE_LABEL: Record<DiscoveryRun["source"], string> = {
   ccdomains: "Alan adı arşivi (.tr)",
   tranco: "Popüler siteler (Tranco)",
   wayback: "Wayback arşivi",
+  general_ccdomains: "Alan adı arşivi (.tr)",
+  general_tranco: "Popüler siteler (Tranco)",
 };
 
 const UNIT_LABEL: Record<DiscoveryRun["source"], string> = {
@@ -32,6 +37,8 @@ const UNIT_LABEL: Record<DiscoveryRun["source"], string> = {
   ccdomains: "alan adı",
   tranco: "site",
   wayback: "sayfa",
+  general_ccdomains: "alan adı",
+  general_tranco: "site",
 };
 
 const STATUS: Record<DiscoveryStatus, { label: string; cls: string }> = {
@@ -330,6 +337,82 @@ export function WaybackForm({ nextPage, totalPages, disabled }: { nextPage: numb
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Genel siteler sekmesi (F6 Faz 3)
+// ---------------------------------------------------------------------------
+
+function PlatformPicker() {
+  const [selected, setSelected] = useState<Set<string>>(new Set(DEFAULT_GENERAL_PLATFORMS));
+  return (
+    <div>
+      <span className={ui.label}>Eklenecek platformlar (ana sayfada tespit edilen)</span>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {GENERAL_PLATFORM_CHOICES.map((p) => (
+          <label key={p} className="flex items-center gap-1 text-[13px]">
+            <input
+              type="checkbox"
+              name="platforms"
+              value={p}
+              checked={selected.has(p)}
+              onChange={(e) =>
+                setSelected((s) => {
+                  const n = new Set(s);
+                  if (e.target.checked) n.add(p);
+                  else n.delete(p);
+                  return n;
+                })
+              }
+            />
+            {PLATFORM_LABEL[p]}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function GeneralCcDomainsForm({ graph, nextStart, disabled }: { graph: string | null; nextStart: number; disabled: boolean }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(startGeneralCcDomainsAction, null);
+  const [limit, setLimit] = useState(20_000);
+  return (
+    <Card
+      title="Alan adı arşivi (.tr)"
+      desc="Common Crawl'ın .tr alan adı listesinden: DNS kaydı olanlara ana sayfa açılır, seçili platformdaki siteler eklenir. Popüler siteler (Tranco ilk 1 milyon), avukat, haber ve kamu siteleri otomatik elenir. Arama motoru kullanmaz."
+    >
+      <form action={action} className="flex flex-col gap-3">
+        <p className="text-[13px] text-stone-600">
+          Liste sürümü: <span className="font-mono text-[12px]">{graph ?? "alınamadı (başlatınca tekrar denenir)"}</span>
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className={ui.label}>Başlangıç sırası</span>
+            <input name="start" type="number" min={0} defaultValue={nextStart} className={ui.input} />
+          </label>
+          <label className="block">
+            <span className={ui.label}>Alan adı sayısı</span>
+            <select name="limit" value={limit} onChange={(e) => setLimit(Number(e.target.value))} className={ui.input}>
+              {[5_000, 20_000, 50_000, 100_000].map((n) => (
+                <option key={n} value={n}>
+                  {n.toLocaleString("tr-TR")}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <PlatformPicker />
+        <p className="text-xs text-stone-500">
+          Tahmini ~{Math.max(1, Math.ceil(limit / 20 / 60))} dk. Her ana sayfa için tek istek atılır (12 eşzamanlı). Liste her seferinde aynı karışık sırada gezilir
+          (avukat, belediye, devlet, üniversite ve okul uzantıları elenir); Başlangıç sırası, en son kalınan yere otomatik ayarlanır.
+        </p>
+        <Submit pending={pending} disabled={disabled}>
+          Taramayı başlat
+        </Submit>
+        <Msg state={state} />
+      </form>
+    </Card>
+  );
+}
+
 export function RunCard({ run }: { run: DiscoveryRun }) {
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<FormState>(null);
@@ -349,10 +432,19 @@ export function RunCard({ run }: { run: DiscoveryRun }) {
     start?: number;
     limit?: number;
     trOnly?: boolean;
+    platforms?: string[];
   };
 
-  const summary =
-    run.source === "search"
+  const general = isGeneralSource(run.source);
+  const platformNames = (p.platforms ?? []).map((x) => (x in PLATFORM_LABEL ? PLATFORM_LABEL[x as keyof typeof PLATFORM_LABEL] : x)).join(", ");
+  const generalSummary =
+    run.source === "general_tranco"
+      ? `${p.listId} · ${((p.start ?? 0) + 1).toLocaleString("tr-TR")}–${((p.start ?? 0) + (p.limit ?? 0)).toLocaleString("tr-TR")}. site · ${platformNames}`
+      : `${p.graph} · ${((p.start ?? 0) + 1).toLocaleString("tr-TR")}–${((p.start ?? 0) + (p.limit ?? 0)).toLocaleString("tr-TR")}. alan adı · ${platformNames}`;
+
+  const summary = general
+    ? generalSummary
+    : run.source === "search"
       ? `${(p.keywords ?? []).slice(0, 4).join(", ")}${(p.keywords?.length ?? 0) > 4 ? ` +${(p.keywords?.length ?? 0) - 4}` : ""}`
       : run.source === "commoncrawl"
         ? `${p.index} · sayfa ${p.startPage}–${(p.startPage ?? 0) + (p.pageCount ?? 0) - 1}`
@@ -368,6 +460,7 @@ export function RunCard({ run }: { run: DiscoveryRun }) {
     <div className={`${ui.card} p-4`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{SOURCE_LABEL[run.source]}</span>
+        <span className="rounded border border-stone-300 px-1.5 py-0.5 text-[11px] text-stone-600">{general ? "Genel" : "Shopify"}</span>
         <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${STATUS[run.status].cls}`}>{STATUS[run.status].label}</span>
         <span className="truncate text-[13px] text-stone-500">
           {summary}
@@ -400,8 +493,20 @@ export function RunCard({ run }: { run: DiscoveryRun }) {
           {s.cursor.toLocaleString("tr-TR")}/{s.total ? s.total.toLocaleString("tr-TR") : "?"} {UNIT_LABEL[run.source]}
         </span>
         <span>{s.candidates} aday</span>
-        <span>{s.shopify} Shopify</span>
-        {p.trOnly !== false && <span>{s.matched} Türk</span>}
+        {general ? (
+          <>
+            <span>{s.dead ?? 0} ulaşılamadı</span>
+            <span>{s.popular ?? 0} popüler (elendi)</span>
+            <span>{s.excluded ?? 0} haber/avukat/kamu (elendi)</span>
+            <span>{s.shopify} Shopify (atlandı)</span>
+            <span>{s.matched} platform eşleşti</span>
+          </>
+        ) : (
+          <>
+            <span>{s.shopify} Shopify</span>
+            {p.trOnly !== false && <span>{s.matched} Türk</span>}
+          </>
+        )}
         <span>{s.known} zaten listede</span>
         <Link href={`/stores?source=${run.source}&sort=created`} className="font-medium text-emerald-700 hover:underline">
           +{s.added} eklendi →

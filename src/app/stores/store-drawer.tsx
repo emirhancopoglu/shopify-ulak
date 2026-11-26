@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import type { Contact, Store } from "@/db/schema";
 import { countryLabel, fmtInt, languageLabel, priceRange, STATUS_LABEL, timeAgo } from "@/lib/format";
+import { siteKind } from "@/lib/platform-labels";
 import { addContactAction, deleteContactAction, reanalyzeAction, setPrimaryContactAction } from "./actions";
-import { TrScore } from "./stores-table";
+import { PlatformBadge, TrScore } from "./stores-table";
 
 const SOCIAL_LABEL: Record<string, string> = {
   instagram: "Instagram",
@@ -44,6 +45,8 @@ export function StoreDrawer({
   const name = store.brandNameOverride ?? store.brandName ?? store.domain;
   const [isPending, startTransition] = useTransition();
   const busy = store.status === "pending" || store.status === "analyzing";
+  // Ürün, tema, uygulama ve eksik bilgileri yalnızca Shopify mağazalarında anlamlı
+  const isShopifySite = siteKind(store) === "shopify";
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true" aria-label={`${name} detayları`}>
@@ -59,6 +62,7 @@ export function StoreDrawer({
               {store.domain} ↗
             </a>
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+              <PlatformBadge row={store} />
               <span className={`rounded px-1.5 py-0.5 font-medium ${STATUS_LABEL[store.status].cls}`}>{STATUS_LABEL[store.status].label}</span>
               {store.error && <span className="text-red-700">{store.error}</span>}
               <span className="text-stone-400">
@@ -87,12 +91,16 @@ export function StoreDrawer({
               <Row k="Şehir / bölge" v={[store.city, store.province].filter(Boolean).join(", ") || "—"} />
               <Row k="Dil" v={store.language ? `${languageLabel(store.language)} (${store.language})` : "—"} />
               <Row k="Para birimi" v={store.currency ?? "—"} />
-              <Row k="Kategori" v={store.category ?? "—"} />
-              <Row k="Ürün sayısı" v={fmtInt(store.productCount)} />
-              <Row k="Fiyat aralığı" v={priceRange(store.priceMin, store.priceMax, store.currency)} />
-              <Row k="Son ürün" v={timeAgo(store.lastProductAt, now)} />
-              <Row k="Tema" v={store.themeName ?? "—"} />
-              <Row k="myshopify" v={store.myshopifyDomain ?? "—"} mono />
+              {isShopifySite && (
+                <>
+                  <Row k="Kategori" v={store.category ?? "—"} />
+                  <Row k="Ürün sayısı" v={fmtInt(store.productCount)} />
+                  <Row k="Fiyat aralığı" v={priceRange(store.priceMin, store.priceMax, store.currency)} />
+                  <Row k="Son ürün" v={timeAgo(store.lastProductAt, now)} />
+                  <Row k="Tema" v={store.themeName ?? "—"} />
+                  <Row k="myshopify" v={store.myshopifyDomain ?? "—"} mono />
+                </>
+              )}
               <Row k="Kaynak" v={store.source} />
             </dl>
           </Section>
@@ -103,6 +111,7 @@ export function StoreDrawer({
             </Section>
           )}
 
+          {isShopifySite && (
           <Section title="Mağaza eksikleri">
             {store.findings === null ? (
               <Empty>Bu mağaza eksik kontrollerinden önce analiz edildi. Yeniden analiz edince görünür.</Empty>
@@ -119,7 +128,9 @@ export function StoreDrawer({
               <Empty>Tespit edilen eksik yok.</Empty>
             )}
           </Section>
+          )}
 
+          {isShopifySite && (
           <Section title="Uygulamalar">
             {store.apps?.length ? (
               <div className="flex flex-wrap gap-1.5">
@@ -133,6 +144,7 @@ export function StoreDrawer({
               <Empty>Tespit edilen uygulama yok.</Empty>
             )}
           </Section>
+          )}
 
           <Section title="Sosyal medya">
             {store.socials && Object.keys(store.socials).length ? (

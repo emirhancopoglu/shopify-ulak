@@ -16,7 +16,9 @@ export default function StoresPage({ searchParams }: PageProps<"/stores">) {
     <div className="mx-auto flex max-w-375 flex-col gap-5">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Mağazalar</h1>
-        <p className="text-stone-500">Alan adı ekleyin; worker her birini Shopify açısından analiz edip mail adresini arar.</p>
+        <p className="text-stone-500">
+          Alan adı ekleyin; worker her birinin platformunu (Shopify, Next.js, WordPress…) tespit edip mail adresini arar. Üstteki Tür seçiciyle Shopify mağazalarını ve genel siteleri ayırabilirsiniz.
+        </p>
       </div>
       <Suspense fallback={<LoadingSkeleton />}>
         <StoresContent searchParams={searchParams} />
@@ -50,10 +52,11 @@ async function StoresContent({ searchParams }: { searchParams: PageProps<"/store
   return (
     <>
       <div className="flex flex-wrap items-stretch gap-3">
-        <section className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-5">
+        <section className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-6">
           <Stat label="Toplam" value={stats.total} />
           <Stat label="Analiz bekleyen" value={stats.pending} />
-          <Stat label="Shopify" value={stats.shopify} />
+          <Stat label="Shopify" value={stats.shopify} hint="Analizi biten Shopify mağazaları" />
+          <Stat label="Genel site" value={stats.general} hint="Analizi biten, Shopify dışındaki siteler" />
           <Stat label="Mail bulunan" value={stats.withEmail} />
           <Stat label="Türkiye odaklı" value={stats.turkish} hint="TR puanı ≥ 40" />
         </section>
@@ -108,8 +111,8 @@ function WorkerBadge({ alive, pending }: { alive: boolean; pending: number }) {
 function LoadingSkeleton() {
   return (
     <div className="flex animate-pulse flex-col gap-5" aria-busy="true" aria-label="Yükleniyor">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {Array.from({ length: 5 }, (_, i) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
+        {Array.from({ length: 6 }, (_, i) => (
           <div key={i} className="h-17 rounded-lg border border-stone-200 bg-white" />
         ))}
       </div>

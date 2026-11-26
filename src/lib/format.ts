@@ -3,7 +3,8 @@ import type { StoreStatus } from "@/db/schema";
 export const STATUS_LABEL: Record<StoreStatus, { label: string; cls: string }> = {
   pending: { label: "Sırada", cls: "bg-stone-100 text-stone-600" },
   analyzing: { label: "Analiz ediliyor", cls: "bg-amber-100 text-amber-800 animate-pulse" },
-  done: { label: "Shopify", cls: "bg-emerald-100 text-emerald-800" },
+  // `done` = analizi biten her site (Shopify ya da genel); platform ayrı sütunda gösterilir
+  done: { label: "Analiz edildi", cls: "bg-emerald-100 text-emerald-800" },
   password: { label: "Şifreli", cls: "bg-violet-100 text-violet-800" },
   not_shopify: { label: "Shopify değil", cls: "bg-stone-200 text-stone-600" },
   unreachable: { label: "Açılmadı", cls: "bg-red-100 text-red-800" },

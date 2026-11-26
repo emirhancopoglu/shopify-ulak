@@ -267,6 +267,85 @@ async function main() {
   assert.equal(listTemplates().filter((t) => t.name === "Kısa tanışma").length, 0, "silinen hazır şablon geri gelmemeli");
   console.log("hazır şablon kontrolleri geçti");
 
+  // --- F6 Faz 5: genel site şablonları (platform değişkeni, Shopify'a özgü metin yok)
+  const v3 = STARTER_BATCHES.find((b) => b.flag === "starter_templates_v3_general")!.templates;
+  assert.equal(v3.length, 4);
+  for (const st of v3) {
+    assert.notEqual(st.audience, "shopify", `${st.name}: genel şablon Shopify hedefli olamaz`);
+    assert.doesNotMatch(`${st.subject} ${st.bodyText}`, /shopify/i, `${st.name}: Shopify geçmemeli`);
+    assert.doesNotMatch(st.bodyText, /\{\{\s*(bulgu|kategori)/, `${st.name}: Shopify'a özgü değişken kullanmamalı`);
+    // platform boşken yedek değer devreye girmeli, eksik değişken kalmamalı
+    const out = render({ format: "text", subject: st.subject, bodyText: st.bodyText, bodyHtml: null }, { marka: "Ornek", site: "ornek.com", imza: "Ad Soyad", platform: "" });
+    assert.deepEqual(out.missing, [], `${st.name}: platform boşken eksik değişken`);
+    const withPlatform = render({ format: "text", subject: st.subject, bodyText: st.bodyText, bodyHtml: null }, { marka: "Ornek", site: "ornek.com", imza: "Ad Soyad", platform: "Next.js" });
+    assert.equal(withPlatform.missing.length, 0);
+  }
+  // Mevcut (Shopify) şablonların tamamı Shopify hedefli olmalı
+  for (const b of STARTER_BATCHES.filter((x) => x.flag !== "starter_templates_v3_general")) for (const st of b.templates) assert.equal(st.audience, "shopify");
+  const { audienceAccepts } = await import("../src/lib/template-audience");
+  assert.equal(audienceAccepts("all", { kind: "general", platform: null }), true);
+  assert.equal(audienceAccepts("shopify", { kind: "shopify", platform: "shopify" }), true);
+  assert.equal(audienceAccepts("shopify", { kind: "general", platform: "nextjs" }), false);
+  assert.equal(audienceAccepts("general", { kind: "general", platform: null }), true);
+  assert.equal(audienceAccepts("js", { kind: "general", platform: "nuxt" }), true);
+  assert.equal(audienceAccepts("js", { kind: "general", platform: "wordpress" }), false);
+  assert.equal(audienceAccepts("js", { kind: "general", platform: null }), false, "platformu bilinmeyen site platforma özel şablona gitmez");
+  assert.equal(audienceAccepts("wordpress", { kind: "general", platform: "wordpress" }), true);
+
+  // storeVars.platform: güvenilir tespitte etiket, düşük güven / bilinmiyor / yok → boş
+  const mkSite = (domain: string, platform: (typeof s.stores.$inferInsert)["platform"], confidence?: "high" | "medium" | "low", source = "manual") => {
+    const id = mk(domain, domain.split(".")[0], `info@${domain}`);
+    db.update(s.stores).set({ platform, source, platformEvidence: confidence ? { confidence, signals: [] } : null }).where(eq(s.stores.id, id)).run();
+    return id;
+  };
+  const get = (id: number) => db.select().from(s.stores).where(eq(s.stores.id, id)).get()!;
+  const nextHigh = mkSite("next-yuksek.com", "nextjs", "high");
+  const nextLow = mkSite("next-dusuk.com", "nextjs", "low");
+  const unknownSite = mkSite("bilinmeyen.com", "unknown", "low");
+  const wpSite = mkSite("wp-site.com", "wordpress", "medium");
+  const shopSite = mkSite("shop-site.com", "shopify", "high");
+  const legacySite = mkSite("eski-kayit.com", null); // platform yok, analiz edilmiş → Shopify sayılır
+  assert.equal(storeVars(get(nextHigh)).platform, "Next.js");
+  assert.equal(storeVars(get(nextLow)).platform, "", "düşük güvenli tespit mail'e girmemeli");
+  assert.equal(storeVars(get(unknownSite)).platform, "");
+  assert.equal(storeVars(get(wpSite)).platform, "WordPress");
+  assert.equal(storeVars(get(shopSite)).platform, "Shopify");
+  assert.equal(storeVars(get(legacySite)).platform, "Shopify");
+  // Şablonda yedek değer yoksa boş platform "eksik değişken" olarak raporlanır
+  assert.deepEqual(render({ format: "text", subject: "x", bodyText: "{{platform}}", bodyHtml: null }, storeVars(get(nextLow))).missing, ["platform"]);
+  assert.match(render({ format: "text", subject: "x", bodyText: "{{platform|web siteniz}}", bodyHtml: null }, storeVars(get(nextLow))).text, /web siteniz/);
+
+  // --- Hedef kitle koruması: JS şablonu + karışık alıcılar
+  const { createTemplate } = await import("../src/lib/template-store");
+  const { audienceMismatchReport, removeAudienceMismatches } = await import("../src/lib/campaigns");
+  const jsTpl = createTemplate({ name: "Test JS", format: "text", audience: "js", subject: "{{marka}} sitesi", bodyText: "Merhaba {{marka}}\n\n{{imza}}\n\n\"çıkar\" yazmanız yeterli", bodyHtml: null });
+  const allTpl = createTemplate({ name: "Test Tümü", format: "text", audience: "all", subject: "{{marka}} sitesi", bodyText: "Merhaba {{marka}}\n\n{{imza}}\n\n\"çıkar\" yazmanız yeterli", bodyHtml: null });
+  const accGeneral = await createGmailAccount({ email: "genel@gmail.com", fromName: "Genel", password: "abcd efgh ijkl mnop", dailyLimit: 100, signature: "Genel" });
+  const mixed = createCampaign([nextHigh, wpSite, shopSite, legacySite, unknownSite]);
+  assert.equal(mixed.added, 5);
+  updateCampaignSettings(mixed.id, { name: "Karışık", templateId: jsTpl.id, accountId: accGeneral.id, perHour: 200 });
+  const rep = audienceMismatchReport(mixed.id)!;
+  assert.equal(rep.count, 4, "wp, shopify, eski kayıt (Shopify) ve bilinmeyen platform JS şablonuna uymaz");
+  assert.equal(rep.audience, "js");
+  assert.throws(() => startCampaign(mixed.id), /yalnızca .* için hazırlanmış.*4 alıcı/);
+  assert.equal(getCampaign(mixed.id)!.status, "draft");
+  // Şablonu "Tümü" yapınca engel kalkar
+  updateCampaignSettings(mixed.id, { name: "Karışık", templateId: allTpl.id, accountId: accGeneral.id, perHour: 200 });
+  assert.equal(audienceMismatchReport(mixed.id), null);
+  // JS'e dön, uymayanları çıkar → yalnızca Next.js alıcısı kalır ve başlatılabilir
+  updateCampaignSettings(mixed.id, { name: "Karışık", templateId: jsTpl.id, accountId: accGeneral.id, perHour: 200 });
+  assert.equal(removeAudienceMismatches(mixed.id), 4);
+  assert.equal(audienceMismatchReport(mixed.id), null);
+  assert.equal(getCampaign(mixed.id)!.counts.queued, 1);
+  startCampaign(mixed.id);
+  assert.equal(getCampaign(mixed.id)!.status, "running");
+  assert.throws(() => removeAudienceMismatches(mixed.id), /duraklat/, "çalışan kampanyadan alıcı çıkarılamaz");
+  await tickCampaigns(Date.now() + 5_000);
+  const sentJs = listRecipients(mixed.id).rows.find((r) => r.email === "info@next-yuksek.com")!;
+  assert.equal(sentJs.status, "sent");
+  assert.equal(sentJs.vars.platform, "Next.js");
+  console.log("hedef kitle kontrolleri geçti");
+
   // --- Mağaza eksiği (bulgu) değişkeni: DB'den okunur, şablona doğru yansır
   const withFinding = db
     .insert(s.stores)

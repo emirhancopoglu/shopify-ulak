@@ -196,6 +196,13 @@ const HAS_VALID_PRIMARY = sql`EXISTS (SELECT 1 FROM contacts c WHERE c.store_id 
 
 const WAS_CONTACTED = sql`EXISTS (SELECT 1 FROM campaign_recipients r WHERE r.store_id = stores.id AND r.status = 'sent')`;
 
+// Tür/platform kuralı: src/lib/platform-labels.ts içindeki siteKind() / effectivePlatform() ile aynı olmalı.
+// Eski kayıtlarda platform boş: F6'dan önce analiz edilen her kayıt Shopify'dı.
+const IS_SHOPIFY_SITE_SQL = `(COALESCE(stores.platform, '') = 'shopify' OR (stores.platform IS NULL AND stores.status != 'not_shopify' AND substr(stores.source, 1, 8) != 'general_'))`;
+const EFFECTIVE_PLATFORM_SQL = `(CASE WHEN stores.platform IS NOT NULL THEN stores.platform WHEN ${IS_SHOPIFY_SITE_SQL} AND stores.status IN ('done', 'password') THEN 'shopify' END)`;
+const IS_SHOPIFY_SITE = sql.raw(IS_SHOPIFY_SITE_SQL);
+const EFFECTIVE_PLATFORM = sql.raw(EFFECTIVE_PLATFORM_SQL);
+
 /** Filtreleri SQL koşuluna çevirir. */
 export function buildWhere(f: StoreFilters): SQL | undefined {
   const conds: (SQL | undefined)[] = [];
@@ -209,6 +216,15 @@ export function buildWhere(f: StoreFilters): SQL | undefined {
         sql`EXISTS (SELECT 1 FROM contacts c WHERE c.store_id = stores.id AND c.email LIKE ${pattern})`,
       ),
     );
+  }
+  if (f.kind === "shopify") conds.push(IS_SHOPIFY_SITE);
+  if (f.kind === "genel") conds.push(sql`NOT ${IS_SHOPIFY_SITE}`);
+  if (f.platform?.length) {
+    const values = sql.join(
+      f.platform.map((p) => sql`${p}`),
+      sql`, `,
+    );
+    conds.push(sql`${EFFECTIVE_PLATFORM} IN (${values})`);
   }
   if (f.status?.length) conds.push(inArray(stores.status, f.status));
   if (f.country?.length) conds.push(inArray(stores.country, f.country));
@@ -304,7 +320,10 @@ export function queryStoresForExport(f: StoreFilters): StoreRow[] {
 }
 
 export type Facet = { value: string; count: number };
-export type StoreFacets = Record<"country" | "language" | "currency" | "app" | "source", Facet[]>;
+export type StoreFacets = Record<"country" | "language" | "currency" | "app" | "source" | "platform", Facet[]> & {
+  /** Tür başına kayıt sayısı (tüm tablo) */
+  kind: { shopify: number; general: number };
+};
 
 /** Filtre menülerindeki seçenekler ve sayıları (tüm tablo üzerinden). */
 export function storeFacets(): StoreFacets {
@@ -315,7 +334,19 @@ export function storeFacets(): StoreFacets {
          WHERE ${col} IS NOT NULL AND ${col} != '' GROUP BY ${col} ORDER BY count DESC, value`,
       )
       .all() as Facet[];
+  const kind = db.$client
+    .prepare(
+      `SELECT COALESCE(SUM(${IS_SHOPIFY_SITE_SQL}), 0) AS shopify, COALESCE(SUM(NOT ${IS_SHOPIFY_SITE_SQL}), 0) AS general FROM stores`,
+    )
+    .get() as { shopify: number; general: number };
   return {
+    kind,
+    platform: db.$client
+      .prepare(
+        `SELECT ${EFFECTIVE_PLATFORM_SQL} AS value, COUNT(*) AS count FROM stores
+         WHERE ${EFFECTIVE_PLATFORM_SQL} IS NOT NULL GROUP BY value ORDER BY count DESC, value`,
+      )
+      .all() as Facet[],
     country: group("country"),
     language: group("language"),
     currency: group("currency"),
@@ -331,7 +362,8 @@ export function storeStats() {
     .select({
       total: sql<number>`COUNT(*)`,
       pending: sql<number>`COALESCE(SUM(status IN ('pending','analyzing')), 0)`,
-      shopify: sql<number>`COALESCE(SUM(status IN ('done','password')), 0)`,
+      shopify: sql<number>`COALESCE(SUM(${IS_SHOPIFY_SITE} AND status IN ('done','password')), 0)`,
+      general: sql<number>`COALESCE(SUM(NOT ${IS_SHOPIFY_SITE} AND status = 'done'), 0)`,
       withEmail: sql<number>`COALESCE(SUM(${HAS_EMAIL}), 0)`,
       turkish: sql<number>`COALESCE(SUM(tr_score >= 40), 0)`,
     })

@@ -2,22 +2,24 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { ui, type FormState } from "@/components/ui";
-import type { Template, TemplateFormat } from "@/db/schema";
+import { TEMPLATE_AUDIENCES, type Platform, type Template, type TemplateAudience, type TemplateFormat } from "@/db/schema";
 import { HTML_STARTER, renderEmail, VARIABLES } from "@/lib/template";
+import { AUDIENCE_LABEL, audienceAccepts } from "@/lib/template-audience";
 import { deleteTemplateAction, duplicateTemplateAction, saveTemplateAction, sendTestAction } from "../actions";
 
 type AccountLite = { id: number; email: string; fromName: string; signature: string };
-type Sample = { id: number; label: string; vars: Record<string, string> };
+type Sample = { id: number; label: string; vars: Record<string, string>; kind: "shopify" | "general"; platform: Platform | null };
 
 const EXAMPLE_VARS: Record<string, string> = Object.fromEntries(VARIABLES.map((v) => [v.key, v.example]));
 
 export function TemplateEditor({ template, accounts, samples }: { template: Template; accounts: AccountLite[]; samples: Sample[] }) {
   const [name, setName] = useState(template.name);
   const [format, setFormat] = useState<TemplateFormat>(template.format);
+  const [audience, setAudience] = useState<TemplateAudience>(template.audience);
   const [subject, setSubject] = useState(template.subject);
   const [bodyText, setBodyText] = useState(template.bodyText);
   const [bodyHtml, setBodyHtml] = useState(template.bodyHtml ?? "");
-  const [saved, setSaved] = useState(() => JSON.stringify([template.name, template.format, template.subject, template.bodyText, template.bodyHtml ?? ""]));
+  const [saved, setSaved] = useState(() => JSON.stringify([template.name, template.format, template.audience, template.subject, template.bodyText, template.bodyHtml ?? ""]));
   const [saveState, setSaveState] = useState<FormState>(null);
   const [saving, startSave] = useTransition();
 
@@ -30,12 +32,14 @@ export function TemplateEditor({ template, accounts, samples }: { template: Temp
   const htmlRef = useRef<HTMLTextAreaElement>(null);
   const lastFocused = useRef<"subject" | "text" | "html">("text");
 
-  const current = JSON.stringify([name, format, subject, bodyText, bodyHtml]);
+  const current = JSON.stringify([name, format, audience, subject, bodyText, bodyHtml]);
   const dirty = current !== saved;
-  const input = { name, format, subject, bodyText, bodyHtml: format === "html" ? bodyHtml : bodyHtml || null };
+  const input = { name, format, audience, subject, bodyText, bodyHtml: format === "html" ? bodyHtml : bodyHtml || null };
 
   const account = accounts.find((a) => a.id === accountId);
-  const sample = samples.find((s) => s.id === sampleId);
+  // Önizleme örnekleri şablonun hedef kitlesine göre süzülür
+  const visibleSamples = useMemo(() => samples.filter((s) => audienceAccepts(audience, { kind: s.kind, platform: s.platform })), [samples, audience]);
+  const sample = sampleId === "example" ? undefined : (visibleSamples.find((s) => s.id === sampleId) ?? visibleSamples[0]);
   const vars = useMemo(
     () => ({
       ...(sample?.vars ?? EXAMPLE_VARS),
@@ -45,7 +49,10 @@ export function TemplateEditor({ template, accounts, samples }: { template: Temp
     [sample, account],
   );
   const rendered = useMemo(() => renderEmail({ format, subject, bodyText, bodyHtml }, vars), [format, subject, bodyText, bodyHtml, vars]);
-  const hints = useMemo(() => contentHints(subject, rendered.text, format === "html" ? bodyHtml : null), [subject, rendered.text, format, bodyHtml]);
+  const hints = useMemo(
+    () => contentHints(subject, rendered.text, format === "html" ? bodyHtml : null, audience, `${subject}\n${bodyText}\n${bodyHtml}`),
+    [subject, rendered.text, format, bodyHtml, bodyText, audience],
+  );
 
   const insert = (key: string) => {
     const token = `{{${key}}}`;
@@ -95,6 +102,18 @@ export function TemplateEditor({ template, accounts, samples }: { template: Temp
             ))}
           </div>
         </div>
+
+        <label className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-stone-500">Hedef kitle</span>
+          <select value={audience} onChange={(e) => setAudience(e.target.value as TemplateAudience)} className={`${ui.input} h-8 max-w-xs`}>
+            {TEMPLATE_AUDIENCES.map((a) => (
+              <option key={a} value={a}>
+                {AUDIENCE_LABEL[a]}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-stone-400">Kampanya, bu kitleye uymayan siteler varken başlatılamaz.</span>
+        </label>
 
         {format === "html" && (
           <p className="rounded-md bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
@@ -195,13 +214,13 @@ export function TemplateEditor({ template, accounts, samples }: { template: Temp
       <div className="flex flex-col gap-3 lg:sticky lg:top-4 lg:self-start">
         <div className="flex flex-wrap gap-2">
           <label className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="text-xs whitespace-nowrap text-stone-500">Mağaza</span>
+            <span className="text-xs whitespace-nowrap text-stone-500">Site</span>
             <select
-              value={sampleId}
+              value={sample?.id ?? "example"}
               onChange={(e) => setSampleId(e.target.value === "example" ? "example" : Number(e.target.value))}
               className={`${ui.input} h-8 min-w-0`}
             >
-              {samples.map((s) => (
+              {visibleSamples.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.label}
                 </option>
@@ -340,8 +359,23 @@ const SHORTENER = /\b(bit\.ly|tinyurl\.com|goo\.gl|t\.co|ow\.ly|is\.gd|cutt\.ly|
 const FREE_HOSTING =
   /\b[a-z0-9-]+\.(vercel\.app|netlify\.app|github\.io|herokuapp\.com|web\.app|firebaseapp\.com|pages\.dev|onrender\.com|wixsite\.com|blogspot\.com|webflow\.io|framer\.website|carrd\.co)\b/i;
 
-function contentHints(subject: string, text: string, html: string | null): { level: "warn" | "bad"; text: string }[] {
+function contentHints(
+  subject: string,
+  text: string,
+  html: string | null,
+  audience: TemplateAudience,
+  source: string,
+): { level: "warn" | "bad"; text: string }[] {
   const out: { level: "warn" | "bad"; text: string }[] = [];
+  if (audience !== "shopify" && /shopify/i.test(`${subject} ${text} ${html ?? ""}`)) {
+    out.push({ level: "warn", text: "Metinde \"Shopify\" geçiyor ama hedef kitle yalnızca Shopify değil; Shopify kullanmayan siteye yanlış gider." });
+  }
+  if (audience !== "shopify" && audience !== "all" && /\{\{\s*(bulgu|kategori)\b/.test(source)) {
+    out.push({ level: "bad", text: "{{bulgu}} / {{kategori}} yalnızca Shopify mağazaları için dolar; bu hedef kitlede boş kalır." });
+  }
+  if (/\{\{\s*platform\s*\}\}/.test(source)) {
+    out.push({ level: "warn", text: "{{platform}} güvenilmez tespitte boş kalır. Yedek değer verin: {{platform|web siteniz}}." });
+  }
   const links = (text.match(/https?:\/\/\S+/g) ?? []).length + (html ? (html.match(/<a\s/gi) ?? []).length : 0);
   const words = text.split(/\s+/).filter(Boolean).length;
 

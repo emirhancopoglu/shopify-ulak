@@ -1,10 +1,12 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { Campaign, CampaignRecipient, RecipientStatus, Store } from "@/db/schema";
+import type { Campaign, CampaignRecipient, Platform, RecipientStatus, Store, TemplateAudience } from "@/db/schema";
 import { DAY_MS, getAccount, sentInLast24h, setAccountError } from "@/lib/accounts";
 import { countryName } from "@/lib/format";
 import { classifySendError, sendEmail } from "@/lib/mailer";
+import { effectivePlatform, PLATFORM_LABEL, siteKind } from "@/lib/platform-labels";
 import { isSuppressed, suppress } from "@/lib/suppression";
+import { AUDIENCE_LABEL, audienceAccepts } from "@/lib/template-audience";
 import { renderEmail, type EmailContent, type RenderedEmail } from "@/lib/template";
 import { getTemplate } from "@/lib/template-store";
 
@@ -23,10 +25,15 @@ export function storeVars(store: Store): Record<string, string> {
   const url = store.finalUrl ? new URL(store.finalUrl).origin : `https://${store.domain}`;
   // En öncelikli mağaza eksiği; yoksa boş (şablonda {{bulgu|...}} varsayılanı kullanılır)
   const topFinding = store.findings?.[0];
+  // Platform: yalnızca güvenilir tespitte dolar. Düşük güvenli ya da "bilinmiyor" ise boş kalır ve şablonun
+  // yedek değeri kullanılır; böylece "X ile yazılmış siteniz" gibi yanlış bir iddia mail'e girmez.
+  const platform = effectivePlatform(store);
+  const isPlatformReliable = platform !== null && platform !== "unknown" && store.platformEvidence?.confidence !== "low";
   return {
     marka: (store.brandNameOverride ?? store.brandName ?? store.domain).trim(),
     site: store.domain,
     url,
+    platform: isPlatformReliable ? PLATFORM_LABEL[platform] : "",
     kategori: store.category ?? "",
     sehir: store.city ?? "",
     ulke: store.country ? countryName(store.country) : "",
@@ -209,6 +216,55 @@ export function missingVarsReport(campaignId: number): { count: number; vars: st
 }
 
 // ---------------------------------------------------------------------------
+// Şablon hedef kitlesi (F6 Faz 5)
+// ---------------------------------------------------------------------------
+
+export type AudienceMismatch = { audience: TemplateAudience; templateName: string; count: number };
+
+/** Kuyruktaki alıcılardan şablonun hedef kitlesine uymayanların id'leri. Mağazası silinmiş alıcı sınıflanamaz, uyumlu sayılır. */
+function mismatchedQueuedIds(c: Campaign): { audience: TemplateAudience; templateName: string; ids: number[] } | null {
+  const template = c.templateId ? getTemplate(c.templateId) : undefined;
+  if (!template) return null;
+  if (template.audience === "all") return { audience: "all", templateName: template.name, ids: [] };
+  const rows = db.$client
+    .prepare(
+      `SELECT r.id AS id, s.id AS storeId, s.platform AS platform, s.status AS status, s.source AS source
+       FROM campaign_recipients r LEFT JOIN stores s ON s.id = r.store_id
+       WHERE r.campaign_id = ? AND r.status = 'queued'`,
+    )
+    .all(c.id) as { id: number; storeId: number | null; platform: Platform | null; status: string | null; source: string | null }[];
+  const ids = rows
+    .filter((r) => {
+      if (r.storeId === null) return false;
+      const site = { platform: r.platform, status: r.status ?? "", source: r.source ?? "" };
+      return !audienceAccepts(template.audience, { kind: siteKind(site), platform: effectivePlatform(site) });
+    })
+    .map((r) => r.id);
+  return { audience: template.audience, templateName: template.name, ids };
+}
+
+/** Seçili şablonun hedef kitlesine uymayan, kuyruktaki alıcı sayısı. Şablon yoksa ya da herkese uyuyorsa null. */
+export function audienceMismatchReport(campaignId: number): AudienceMismatch | null {
+  const c = db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get();
+  const r = c ? mismatchedQueuedIds(c) : null;
+  return r && r.ids.length > 0 ? { audience: r.audience, templateName: r.templateName, count: r.ids.length } : null;
+}
+
+/** Hedef kitleye uymayan, kuyruktaki alıcıları kampanyadan çıkarır. Çıkarılan sayıyı döndürür. */
+export function removeAudienceMismatches(campaignId: number): number {
+  const c = requireCampaign(campaignId);
+  if (c.status === "running") throw new Error("Çalışan kampanyada alıcı çıkarılamaz; önce duraklatın.");
+  const r = mismatchedQueuedIds(c);
+  if (!r) return 0;
+  for (let i = 0; i < r.ids.length; i += 500) {
+    db.delete(recipients)
+      .where(and(eq(recipients.campaignId, campaignId), eq(recipients.status, "queued"), inArray(recipients.id, r.ids.slice(i, i + 500))))
+      .run();
+  }
+  return r.ids.length;
+}
+
+// ---------------------------------------------------------------------------
 // Yönetim
 // ---------------------------------------------------------------------------
 
@@ -245,6 +301,13 @@ export function startCampaign(id: number) {
   const account = c.accountId ? getAccount(c.accountId) : undefined;
   if (!account) throw new Error("Önce gönderen hesabı seçin.");
   if (countsFor(id).queued === 0) throw new Error("Sırada gönderilecek alıcı yok.");
+  // Hedef kitle koruması: Shopify tanıtım metni Next.js/WordPress sitesine (ya da tersi) gitmesin.
+  const mismatch = audienceMismatchReport(id);
+  if (mismatch) {
+    throw new Error(
+      `"${mismatch.templateName}" şablonu yalnızca "${AUDIENCE_LABEL[mismatch.audience]}" için hazırlanmış, ama kuyrukta buna uymayan ${mismatch.count} alıcı var. Şablonu değiştirin ya da uymayan alıcıları kampanyadan çıkarın.`,
+    );
+  }
   const sent = sentInLast24h(account.id);
   if (sent >= account.dailyLimit) throw new Error(`Bu hesabın 24 saatlik limiti dolu (${sent}/${account.dailyLimit}).`);
 
@@ -465,14 +528,29 @@ export async function sendTest(
   return rendered;
 }
 
-/** Tarayıcıdaki canlı önizleme için örnek mağazalar (birincil maili olanlar). */
-export function sampleStoresForPreview(limit = 200) {
-  return db
+/**
+ * Tarayıcıdaki canlı önizleme için örnek mağazalar (birincil maili olanlar).
+ * Her platformdan (Shopify, Next.js, WordPress…) en fazla `perGroup` tane alınır; böylece her hedef kitle için örnek bulunur.
+ * `kind` ve `platform`, editörün örnekleri şablonun hedef kitlesine göre süzmesi içindir.
+ */
+export function sampleStoresForPreview(perGroup = 40) {
+  const rows = db
     .select({ store: stores })
     .from(stores)
     .where(sql`EXISTS (SELECT 1 FROM contacts c WHERE c.store_id = stores.id AND c.is_primary = 1)`)
     .orderBy(desc(stores.trScore), desc(stores.id))
-    .limit(limit)
-    .all()
-    .map(({ store }) => ({ id: store.id, label: `${store.brandNameOverride ?? store.brandName ?? store.domain} · ${store.domain}`, vars: storeVars(store) }));
+    .limit(4000)
+    .all();
+  const taken = new Map<string, number>();
+  const out: { id: number; label: string; vars: Record<string, string>; kind: "shopify" | "general"; platform: Platform | null }[] = [];
+  for (const { store } of rows) {
+    const platform = effectivePlatform(store);
+    const kind = siteKind(store);
+    const group = platform ?? kind;
+    if ((taken.get(group) ?? 0) >= perGroup) continue;
+    taken.set(group, (taken.get(group) ?? 0) + 1);
+    const label = [store.brandNameOverride ?? store.brandName ?? store.domain, store.domain, platform ? PLATFORM_LABEL[platform] : null].filter(Boolean).join(" · ");
+    out.push({ id: store.id, label, vars: storeVars(store), kind, platform });
+  }
+  return out;
 }

@@ -1,3 +1,4 @@
+import { effectivePlatform, PLATFORM_LABEL, siteKind } from "@/lib/platform-labels";
 import { parseFilters } from "@/lib/store-filters";
 import { queryStoresForExport } from "@/lib/stores";
 
@@ -9,6 +10,8 @@ export async function GET(request: Request) {
   const header = [
     "domain",
     "marka",
+    "tur",
+    "platform",
     "durum",
     "mail",
     "mail_mx",
@@ -35,10 +38,16 @@ export async function GET(request: Request) {
     const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
     return /[",;\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
+  const platformLabel = (r: (typeof rows)[number]) => {
+    const platform = effectivePlatform(r);
+    return platform ? PLATFORM_LABEL[platform] : "";
+  };
   const lines = rows.map((r) =>
     [
       r.domain,
       r.brandNameOverride ?? r.brandName,
+      siteKind(r) === "shopify" ? "shopify" : "genel",
+      platformLabel(r),
       r.status,
       r.primaryEmail,
       r.primaryMx === null ? "" : r.primaryMx ? "var" : "yok",

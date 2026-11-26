@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import type { Template, TemplateFormat } from "@/db/schema";
+import type { Template, TemplateAudience, TemplateFormat } from "@/db/schema";
 import { DEFAULT_TEMPLATE, STARTER_BATCHES } from "@/lib/template";
 import { getSetting, setSetting } from "@/lib/settings";
 
@@ -34,6 +34,7 @@ export function getTemplate(id: number): Template | undefined {
 export type TemplateInput = {
   name: string;
   format: TemplateFormat;
+  audience: TemplateAudience;
   subject: string;
   bodyText: string;
   bodyHtml: string | null;
@@ -53,7 +54,7 @@ export function updateTemplate(id: number, input: TemplateInput) {
 export function duplicateTemplate(id: number) {
   const t = getTemplate(id);
   if (!t) return null;
-  return createTemplate({ name: `${t.name} (kopya)`, format: t.format, subject: t.subject, bodyText: t.bodyText, bodyHtml: t.bodyHtml });
+  return createTemplate({ name: `${t.name} (kopya)`, format: t.format, audience: t.audience, subject: t.subject, bodyText: t.bodyText, bodyHtml: t.bodyHtml });
 }
 
 export function deleteTemplate(id: number) {

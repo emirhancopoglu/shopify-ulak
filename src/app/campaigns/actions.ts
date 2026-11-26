@@ -7,6 +7,7 @@ import {
   createCampaign,
   deleteCampaign,
   pauseCampaign,
+  removeAudienceMismatches,
   removeRecipient,
   retryFailed,
   startCampaign,
@@ -102,6 +103,19 @@ export async function removeRecipientAction(recipientId: number) {
   if (!isId(recipientId)) return;
   removeRecipient(recipientId);
   refresh();
+}
+
+/** Şablonun hedef kitlesine uymayan, kuyruktaki alıcıları kampanyadan çıkarır. */
+export async function removeAudienceMismatchesAction(id: number): Promise<FormState> {
+  if (!isId(id)) return { ok: false, message: "Geçersiz kampanya." };
+  let removed = 0;
+  try {
+    removed = removeAudienceMismatches(id);
+  } catch (err) {
+    return { ok: false, message: errMsg(err) };
+  }
+  refresh();
+  return { ok: true, message: `${removed} alıcı çıkarıldı.` };
 }
 
 export async function updateRecipientBrandAction(recipientId: number, marka: string): Promise<FormState> {
