@@ -347,10 +347,17 @@ async function main() {
   console.log("hedef kitle kontrolleri geçti");
 
   // --- Mail alt bilgisi (HTML footer): düz metin ve HTML şablonlara eklenir, düz metin alternatifi üretilir
-  const { saveEmailFooter, getEmailFooter } = await import("../src/lib/email-footer");
+  const { saveEmailFooter, getEmailFooter, EMAIL_FOOTER_KEY, EMAIL_FOOTER_SEEDED_KEY } = await import("../src/lib/email-footer");
   const { sendTest } = await import("../src/lib/campaigns");
   const FOOTER = `<tr><td style="padding-top:22px;"><div>Dijital Craft</div><a href="https://www.dijitalcraft.com">dijitalcraft.com</a> <a href="mailto:info@dijitalcraft.com">info@dijitalcraft.com</a><div>Bu notu almak istemezseniz “çıkar” yazarak yanıtlayın.</div></td></tr>`;
   const textTpl = { format: "text" as const, subject: "x", bodyText: "Merhaba <Ali>\n\nİyi çalışmalar", bodyHtml: null };
+  assert.match(getEmailFooter() ?? "", /dijitalcraft-mark\.png/, "kayıt yokken varsayılan alt bilgi yazılır");
+  assert.match(getEmailFooter() ?? "", /instagram\.com\/dijitalcraftcom/);
+  saveEmailFooter("");
+  assert.equal(getEmailFooter(), null, "temizlenen varsayılan alt bilgi geri gelmez");
+  db.$client.prepare(`DELETE FROM kv WHERE key IN (?, ?)`).run(EMAIL_FOOTER_KEY, EMAIL_FOOTER_SEEDED_KEY);
+  assert.match(getEmailFooter() ?? "", /dijitalcraft-mark\.png/, "bayrak silinince varsayılan yeniden yazılır");
+  saveEmailFooter("");
   assert.equal(getEmailFooter(), null);
   assert.equal(render(textTpl, {}).html, null, "alt bilgi yokken düz metin mail HTML'siz kalır");
   assert.equal(render(textTpl, {}, { footerHtml: "   " }).html, null, "boş alt bilgi eklenmez");
@@ -386,7 +393,43 @@ async function main() {
   assert.match(tested.html ?? "", /Dijital Craft/, "test gönderimi alt bilgiyi içermeli");
   saveEmailFooter("");
   assert.equal(getEmailFooter(), null, "boş kayıt alt bilgiyi kaldırır");
-  console.log("alt bilgi kontrolleri geçti");
+
+  // --- Inline CID görseller: uzak <img src="https://..."> gönderimde MIME inline ekine dönüşür
+  const { inlineRemoteImages, clearInlineImageCache } = await import("../src/lib/inline-images");
+  clearInlineImageCache();
+  const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const fetchedUrls: string[] = [];
+  const fakeFetch = async (url: string) => {
+    fetchedUrls.push(url);
+    if (url.includes("bozuk")) return null;
+    return { content: fakePng, contentType: "image/png" };
+  };
+  const imgHtml = `<div><img src="https://dijitalcraft.com/logo.png?v=1&amp;w=40" alt="DC"><img src="https://dijitalcraft.com/logo.png?v=1&amp;w=40"><img src="https://dijitalcraft.com/bozuk.png"></div>`;
+  const inlined = await inlineRemoteImages(imgHtml, { fetchImage: fakeFetch });
+  assert.equal(inlined.attachments.length, 1, "aynı URL tek ek olur, bozuk URL atlanır");
+  assert.equal(inlined.attachments[0].filename, "logo.png");
+  assert.equal(inlined.attachments[0].contentDisposition, "inline");
+  assert.equal(inlined.attachments[0].cid, "inline-img-1@ulak.local");
+  assert.deepEqual(fetchedUrls, ["https://dijitalcraft.com/logo.png?v=1&w=40", "https://dijitalcraft.com/bozuk.png"]);
+  assert.equal((inlined.html.match(/cid:inline-img-1@ulak\.local/g) ?? []).length, 2, "aynı URL'nin iki kullanımı da aynı cid'i alır");
+  assert.match(inlined.html, /src="https:\/\/dijitalcraft\.com\/bozuk\.png"/, "indirilemeyen görsel orijinal URL ile kalır");
+
+  // sendEmail üzerinden kurumsal SMTP MIME çıktısında CID eki ve referansı yer alır
+  let rawWithCid = "";
+  await sendEmail(
+    smAccount,
+    { to: "alici5@ornek.com", subject: "CID test", text: "Merhaba", html: `<p>Selam</p><img src="https://dijitalcraft.com/logo.png">` },
+    {
+      fetchImage: fakeFetch,
+      appendSent: async (_cfg, raw) => {
+        rawWithCid = raw.toString("utf8");
+      },
+    },
+  );
+  assert.match(rawWithCid, /Content-ID: <inline-img-1@ulak\.local>/i);
+  assert.match(rawWithCid, /Content-Disposition: inline; filename=logo\.png/i);
+  assert.match(rawWithCid, /cid:inline-img-1@ulak\.local/);
+  console.log("alt bilgi ve CID görsel kontrolleri geçti");
 
   // --- Mağaza eksiği (bulgu) değişkeni: DB'den okunur, şablona doğru yansır
   const withFinding = db

@@ -17,7 +17,7 @@ function footerHints(html: string): { level: "warn" | "bad"; text: string }[] {
   if (images > 0) {
     out.push({
       level: "warn",
-      text: `${images} görsel var. Çoğu mail istemcisi görselleri varsayılan olarak göstermez, soğuk mailde spam puanını artırır ve maili "kişisel yazılmış" göstermez. Görselsiz deneyip kendinize test gönderin.`,
+      text: `${images} görsel var. Gönderim sırasında mail içine otomatik gömülür (CID); Gelen Kutusu'nda tıklamadan görünür, ancak soğuk mailde görsel spam puanını artırabilir ve Gereksiz E-posta'da yine gizlenebilir.`,
     });
   }
   if (links > 3) out.push({ level: "warn", text: `${links} link var; soğuk mailde toplam 1-3 link önerilir (mail metnindekilerle birlikte).` });
@@ -61,7 +61,7 @@ export function EmailFooterSection({ footerHtml }: { footerHtml: string }) {
           />
           <span className={ui.hint}>
             <code>&lt;tr&gt;…&lt;/tr&gt;</code> satırı olarak yazarsanız otomatik bir tabloya sarılır; başka HTML olduğu gibi eklenir. script, iframe ve form etiketlerine izin
-            verilmez. Görseller için herkese açık, https adresli bir bağlantı gerekir.
+            verilmez. HTTPS görseller (PNG/JPG/GIF/WebP, en fazla 512 KB) gönderimde mail içine otomatik olarak gömülür (CID).
           </span>
         </label>
 
