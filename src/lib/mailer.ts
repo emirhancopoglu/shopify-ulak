@@ -4,6 +4,7 @@ import type { Account } from "@/db/schema";
 import { OutlookAuthError, outlookAccessToken } from "@/lib/outlook";
 import { decrypt, encrypt } from "@/lib/secret";
 import { getSetting } from "@/lib/settings";
+import { inlineRemoteImages, type FetchImageFn } from "@/lib/inline-images";
 
 /**
  * "Abonelikten çık" (List-Unsubscribe) başlığı. Google bunu yalnızca günde 5000+ gönderenlere zorunlu tutar;
@@ -159,13 +160,17 @@ async function buildRawMessage(opts: Record<string, unknown>): Promise<Buffer> {
 export async function sendEmail(
   account: Account,
   mail: OutgoingEmail,
-  deps: { appendSent?: AppendSentFn | null } = {},
+  deps: { appendSent?: AppendSentFn | null; fetchImage?: FetchImageFn | null } = {},
 ): Promise<{ messageId: string }> {
   const t = await transportFor(account);
   // Kurumsal SMTP'de gönderilenler klasörüne kopya yazılmaz; IMAP APPEND ile eklenir.
-  // Kuru modda (MAIL_TRANSPORT=json) gerçek IMAP'a bağlanılmaz.
+  // Kuru modda (MAIL_TRANSPORT=json) gerçek IMAP'a bağlanılmaz ve dış görseller indirilmez.
   const appendSent: AppendSentFn | null =
     deps.appendSent !== undefined ? deps.appendSent : DRY_RUN ? null : appendToSentFolder;
+  const shouldInline = mail.html && (deps.fetchImage !== undefined ? deps.fetchImage !== null : !DRY_RUN);
+  const inlined = shouldInline
+    ? await inlineRemoteImages(mail.html!, deps.fetchImage ? { fetchImage: deps.fetchImage } : {})
+    : { html: mail.html, attachments: [] };
   try {
     // Date'i biz veriyoruz ki SMTP'de giden ve IMAP'a yazılan kopya aynı tarihi taşısın
     const mailOpts = {
@@ -174,7 +179,8 @@ export async function sendEmail(
       subject: mail.subject,
       text: mail.text,
       date: new Date(),
-      ...(mail.html ? { html: mail.html } : {}),
+      ...(inlined.html ? { html: inlined.html } : {}),
+      ...(inlined.attachments.length ? { attachments: inlined.attachments } : {}),
       // Gmail/Outlook "abonelikten çık" bağlantısını bu başlıktan gösterir
       ...(listUnsubscribeEnabled() ? { headers: { "List-Unsubscribe": `<mailto:${account.email}?subject=unsubscribe>` } } : {}),
     };
