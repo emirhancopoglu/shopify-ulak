@@ -346,6 +346,48 @@ async function main() {
   assert.equal(sentJs.vars.platform, "Next.js");
   console.log("hedef kitle kontrolleri geçti");
 
+  // --- Mail alt bilgisi (HTML footer): düz metin ve HTML şablonlara eklenir, düz metin alternatifi üretilir
+  const { saveEmailFooter, getEmailFooter } = await import("../src/lib/email-footer");
+  const { sendTest } = await import("../src/lib/campaigns");
+  const FOOTER = `<tr><td style="padding-top:22px;"><div>Dijital Craft</div><a href="https://www.dijitalcraft.com">dijitalcraft.com</a> <a href="mailto:info@dijitalcraft.com">info@dijitalcraft.com</a><div>Bu notu almak istemezseniz “çıkar” yazarak yanıtlayın.</div></td></tr>`;
+  const textTpl = { format: "text" as const, subject: "x", bodyText: "Merhaba <Ali>\n\nİyi çalışmalar", bodyHtml: null };
+  assert.equal(getEmailFooter(), null);
+  assert.equal(render(textTpl, {}).html, null, "alt bilgi yokken düz metin mail HTML'siz kalır");
+  assert.equal(render(textTpl, {}, { footerHtml: "   " }).html, null, "boş alt bilgi eklenmez");
+
+  const withFooter = render(textTpl, {}, { footerHtml: FOOTER });
+  assert.ok(withFooter.html, "alt bilgiyle düz metin mail HTML de taşır");
+  assert.match(withFooter.html!, /Merhaba &lt;Ali&gt;<br><br>İyi çalışmalar/, "metin kaçışlanıp birebir HTML'e çevrilmeli");
+  assert.match(withFooter.html!, /<table role="presentation"[^>]*><tbody><tr><td/, "<tr> alt bilgi tabloya sarılmalı");
+  assert.match(withFooter.html!, /href="https:\/\/www\.dijitalcraft\.com"/);
+  assert.match(withFooter.text, /^Merhaba <Ali>\n\nİyi çalışmalar\n\nDijital Craft/, "düz metin alternatifi gövde + alt bilgi");
+  assert.match(withFooter.text, /dijitalcraft\.com \(https:\/\/www\.dijitalcraft\.com\)/);
+  assert.match(withFooter.text, /info@dijitalcraft\.com(?! \()/, "mailto bağlantısı yalnızca adres olarak yazılmalı");
+  assert.doesNotMatch(withFooter.text, /mailto:|<td|<div/);
+  assert.match(withFooter.text, /“çıkar” yazarak yanıtlayın/);
+
+  const htmlTpl = { format: "html" as const, subject: "x", bodyText: "", bodyHtml: "<html><body><p>Selam</p></body></html>" };
+  const htmlWith = render(htmlTpl, {}, { footerHtml: FOOTER });
+  assert.ok(htmlWith.html!.indexOf("Selam") < htmlWith.html!.indexOf("Dijital Craft") && htmlWith.html!.indexOf("Dijital Craft") < htmlWith.html!.lastIndexOf("</body>"), "HTML şablonda alt bilgi </body> öncesine gelir");
+  assert.equal((htmlWith.html!.match(/<\/body>/g) ?? []).length, 1);
+  assert.match(htmlWith.text, /Selam[\s\S]*Dijital Craft/);
+  const divFooter = render(textTpl, {}, { footerHtml: "<p>Alt not</p>" });
+  assert.match(divFooter.html!, /<div style="margin-top:24px;"><p>Alt not<\/p><\/div>/, "<tr> olmayan HTML olduğu gibi eklenir");
+
+  // Kayıt doğrulaması ve kampanya akışı (önizleme + test gönderimi) alt bilgiyi kullanır
+  assert.equal(saveEmailFooter("<script>alert(1)</script>").ok, false);
+  assert.equal(saveEmailFooter("<form></form>").ok, false);
+  assert.equal(saveEmailFooter("x".repeat(20_001)).ok, false);
+  assert.equal(getEmailFooter(), null, "reddedilen alt bilgi kaydedilmemeli");
+  assert.equal(saveEmailFooter(FOOTER).ok, true);
+  assert.equal(getEmailFooter(), FOOTER.trim());
+  assert.match(previewRecipient(mixed.id)!.email.html ?? "", /Dijital Craft/, "kampanya önizlemesi alt bilgiyi içermeli");
+  const tested = await sendTest(accGeneral.id, "alici@ornek.com", textTpl, { marka: "X" }, { prefix: false });
+  assert.match(tested.html ?? "", /Dijital Craft/, "test gönderimi alt bilgiyi içermeli");
+  saveEmailFooter("");
+  assert.equal(getEmailFooter(), null, "boş kayıt alt bilgiyi kaldırır");
+  console.log("alt bilgi kontrolleri geçti");
+
   // --- Mağaza eksiği (bulgu) değişkeni: DB'den okunur, şablona doğru yansır
   const withFinding = db
     .insert(s.stores)

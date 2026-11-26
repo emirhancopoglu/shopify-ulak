@@ -64,9 +64,11 @@ export function htmlToText(html: string): string {
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div|h[1-6]|li|tr|table)>/gi, "\n")
     .replace(/<li[^>]*>/gi, "• ")
-    .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, label: string) =>
-      label.replace(/<[^>]+>/g, "").trim() === href ? href : `${label} (${href})`,
-    )
+    .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href: string, label: string) => {
+      const plain = label.replace(/<[^>]+>/g, "").trim();
+      // "info@x.com (mailto:info@x.com)" yerine yalnızca adres
+      return plain === href || `mailto:${plain}` === href ? plain : `${label} (${href})`;
+    })
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
@@ -82,23 +84,54 @@ export function htmlToText(html: string): string {
 export type EmailContent = { format: "text" | "html"; subject: string; bodyText: string; bodyHtml: string | null };
 export type RenderedEmail = { subject: string; text: string; html: string | null; missing: string[] };
 
-export function renderEmail(content: EmailContent, vars: TemplateVars): RenderedEmail {
+/** Mail altına eklenecek HTML (Ayarlar > Mail alt bilgisi). Boşsa eklenmez. */
+export type RenderOptions = { footerHtml?: string | null };
+
+const MAIL_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+/**
+ * Alt bilgi HTML'ini mail gövdesine eklenecek biçime getirir. `<tr>` satırı olarak yazılmış alt bilgi
+ * (tablo tabanlı mail düzeni) tabloya sarılır; başka HTML olduğu gibi kalır.
+ */
+export function wrapFooterHtml(footer: string): string {
+  const html = footer.trim();
+  if (/^<(tr|tbody)[\s>]/i.test(html)) {
+    return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin-top:24px;"><tbody>${html}</tbody></table>`;
+  }
+  return `<div style="margin-top:24px;">${html}</div>`;
+}
+
+/** Alt bilgiyi (HTML ve düz metin olarak) mail içeriğine ekler. */
+function withFooter(html: string | null, text: string, footerHtml: string | null | undefined): { html: string | null; text: string } {
+  if (!footerHtml?.trim()) return { html, text };
+  const footer = wrapFooterHtml(footerHtml);
+  const footerText = htmlToText(footer);
+  // Düz metin şablon: HTML parça, metnin birebir yansıması olur (görsel/tasarım yok), altına alt bilgi gelir
+  const body = html ?? `<div style="font-family:${MAIL_FONT};font-size:14px;line-height:1.6;color:#1c1c1f;">${escapeHtml(text)}</div>`;
+  const merged = /<\/body>/i.test(body) ? body.replace(/<\/body>(?![\s\S]*<\/body>)/i, () => `${footer}</body>`) : body + footer;
+  return { html: merged, text: footerText ? `${text}\n\n${footerText}` : text };
+}
+
+export function renderEmail(content: EmailContent, vars: TemplateVars, options: RenderOptions = {}): RenderedEmail {
   const subject = renderString(content.subject, vars);
   if (content.format === "html" && content.bodyHtml?.trim()) {
     const html = renderString(content.bodyHtml, vars, { escape: escapeHtml });
     const text = content.bodyText.trim() ? renderString(content.bodyText, vars) : { output: htmlToText(html.output), missing: [] };
+    const merged = withFooter(html.output, text.output, options.footerHtml);
     return {
       subject: subject.output.replace(/\s+/g, " ").trim(),
-      text: text.output,
-      html: html.output,
+      text: merged.text,
+      html: merged.html,
       missing: [...new Set([...subject.missing, ...html.missing, ...text.missing])],
     };
   }
   const text = renderString(content.bodyText, vars);
+  const plain = text.output.replace(/\n{3,}/g, "\n\n").trim();
+  const merged = withFooter(null, plain, options.footerHtml);
   return {
     subject: subject.output.replace(/\s+/g, " ").trim(),
-    text: text.output.replace(/\n{3,}/g, "\n\n").trim(),
-    html: null,
+    text: merged.text,
+    html: merged.html,
     missing: [...new Set([...subject.missing, ...text.missing])],
   };
 }

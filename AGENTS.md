@@ -26,6 +26,7 @@ Product scope (decided 2026-11-26): the offer is web development for sites built
 - **Spread sends randomly** across the hour (e.g. 100/hour ≈ one every ~36s ± jitter). Never burst.
 - **Local-only app.** No auth, no multi-tenant, no deployment target. Credentials live on the user's machine.
 - **Emails are plain text** (decided 2026-11-20): no designed HTML templates. A minimal HTML part that mirrors the text is OK, but the email must look hand-written: no images, no tracking pixels, few links.
+ - **Exception, owner's choice (2026-11-26): optional HTML footer.** Settings > "Mail alt bilgisi (HTML)" stores one HTML block (kv `email_footer_html`) that `renderEmail(content, vars, { footerHtml })` appends to EVERY email (campaign send, campaign preview, template preview, test send). Empty = off. With a footer, a text template is sent as HTML (the text, escaped, in one div) + footer, and the text part is `body + htmlToText(footer)`; HTML templates get it before `</body>`. A `<tr>` footer is wrapped in a table. The owner's footer has a logo image, links and a "Shopify" line, which goes against the deliverability lessons above; the Settings screen only warns (images, >3 links, free hosting, "Shopify" text, no opt-out line). Not per-account, not per-template.
 - **No per-store "findings/audit" personalization for now** (shelved 2026-11-20). An earlier idea was to detect each store's problems (old theme, broken nav links, missing reviews, PageSpeed) and mention one in the email. Don't build it unless the user revives it. Mentioning the detected platform (for example "Next.js ile yazılmış siteniz") is NOT a findings audit and is allowed.
 - **Compliance basics:** every email needs an opt-out, either a `List-Unsubscribe: mailto:` header or a "reply 'çıkar'" line. Keep a suppression list that is always honored. Never email the same address twice in one campaign.
 - **UI language is Turkish.** All user-facing strings are Turkish. Code identifiers are English; comments may be Turkish.
@@ -63,6 +64,7 @@ src/lib/env.ts            loadDotEnv(): loads .env.local/.env for worker and scr
 src/lib/mailer.ts         Nodemailer: Gmail SMTP (465, app password), Outlook SMTP (587, XOAUTH2) and generic corporate SMTP (`smtp` provider). List-Unsubscribe header, provider-aware classifySendError, DRY-RUN via MAIL_TRANSPORT=json
 src/lib/outlook.ts        Microsoft OAuth (PKCE, consumers): authorize URL, code exchange, cached access token + refresh-token rotation, explainMicrosoftError (AADSTS → Turkish fix hints)
 src/lib/settings.ts       getSetting/setSetting on kv
+src/lib/email-footer.ts   HTML mail footer (kv `email_footer_html`, set in Settings): getEmailFooter / saveEmailFooter (rejects script/iframe/form, max 20k chars)
 src/app/api/oauth/outlook/  start (sets httpOnly state+verifier cookie → Microsoft) and callback (verify state, exchange, SMTP verify, upsert account)
 src/lib/campaigns.ts      campaign create (with filtering) / settings / start / pause / stop / retry, preview, tickCampaigns (worker), sendTest
 src/lib/suppression.ts    suppression list (never-send); labels in suppression-labels.ts (client-safe)

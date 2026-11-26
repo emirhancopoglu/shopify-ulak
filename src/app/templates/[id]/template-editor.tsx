@@ -12,7 +12,7 @@ type Sample = { id: number; label: string; vars: Record<string, string>; kind: "
 
 const EXAMPLE_VARS: Record<string, string> = Object.fromEntries(VARIABLES.map((v) => [v.key, v.example]));
 
-export function TemplateEditor({ template, accounts, samples }: { template: Template; accounts: AccountLite[]; samples: Sample[] }) {
+export function TemplateEditor({ template, accounts, samples, footerHtml }: { template: Template; accounts: AccountLite[]; samples: Sample[]; footerHtml: string | null }) {
   const [name, setName] = useState(template.name);
   const [format, setFormat] = useState<TemplateFormat>(template.format);
   const [audience, setAudience] = useState<TemplateAudience>(template.audience);
@@ -48,7 +48,7 @@ export function TemplateEditor({ template, accounts, samples }: { template: Temp
     }),
     [sample, account],
   );
-  const rendered = useMemo(() => renderEmail({ format, subject, bodyText, bodyHtml }, vars), [format, subject, bodyText, bodyHtml, vars]);
+  const rendered = useMemo(() => renderEmail({ format, subject, bodyText, bodyHtml }, vars, { footerHtml }), [format, subject, bodyText, bodyHtml, vars, footerHtml]);
   const hints = useMemo(
     () => contentHints(subject, rendered.text, format === "html" ? bodyHtml : null, audience, `${subject}\n${bodyText}\n${bodyHtml}`),
     [subject, rendered.text, format, bodyHtml, bodyText, audience],

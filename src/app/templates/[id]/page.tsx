@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { ui } from "@/components/ui";
 import { listAccounts } from "@/lib/accounts";
 import { sampleStoresForPreview } from "@/lib/campaigns";
+import { getEmailFooter } from "@/lib/email-footer";
 import { getTemplate } from "@/lib/template-store";
 import { TemplateEditor } from "./template-editor";
 
@@ -27,5 +28,5 @@ async function EditorLoader({ params }: { params: PageProps<"/templates/[id]">["
   const template = getTemplate(Number(id));
   if (!template) notFound();
   const accounts = listAccounts().map((a) => ({ id: a.id, email: a.email, fromName: a.fromName, signature: a.signature }));
-  return <TemplateEditor template={template} accounts={accounts} samples={sampleStoresForPreview()} />;
+  return <TemplateEditor template={template} accounts={accounts} samples={sampleStoresForPreview()} footerHtml={getEmailFooter()} />;
 }
