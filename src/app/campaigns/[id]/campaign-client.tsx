@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useActionState, useEffect, useState, useTransition } from "react";
 import { ui, type FormState } from "@/components/ui";
 import type { CampaignStatus, RecipientStatus, TemplateAudience, TemplateFormat } from "@/db/schema";
-import { RECIPIENT_STATUS } from "@/lib/campaign-labels";
+import { MAX_PER_HOUR, RECIPIENT_STATUS } from "@/lib/campaign-labels";
 import { AUDIENCE_SHORT_LABEL } from "@/lib/template-audience";
 import {
   deleteCampaignAction,
@@ -172,7 +172,7 @@ export function SettingsForm({
         <label className="block">
           <span className={ui.label}>Saatte kaç mail</span>
           <div className="flex items-center gap-3">
-            <input name="perHour" type="number" min={1} max={200} value={perHour} onChange={(e) => setPerHour(Number(e.target.value))} className={`${ui.input} w-24`} />
+            <input name="perHour" type="number" min={1} max={MAX_PER_HOUR} value={perHour} onChange={(e) => setPerHour(Number(e.target.value))} className={`${ui.input} w-24`} />
             <span className="text-[13px] text-stone-500">≈ her {perHour > 0 ? Math.round(3600 / perHour) : "—"} sn&apos;de bir (rastgele ±%50)</span>
           </div>
           {perHour > 30 && (

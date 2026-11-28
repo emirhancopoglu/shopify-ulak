@@ -7,13 +7,13 @@ import { classifySendError, sendEmail } from "@/lib/mailer";
 import { getEmailFooter } from "@/lib/email-footer";
 import { effectivePlatform, PLATFORM_LABEL, siteKind } from "@/lib/platform-labels";
 import { isSuppressed, suppress } from "@/lib/suppression";
+import { MAX_PER_HOUR } from "@/lib/campaign-labels";
 import { AUDIENCE_LABEL, audienceAccepts } from "@/lib/template-audience";
 import { renderEmail, type EmailContent, type RenderedEmail } from "@/lib/template";
 import { getTemplate } from "@/lib/template-store";
 
 const { campaigns, campaignRecipients: recipients, stores, contacts } = schema;
 
-export const MAX_PER_HOUR = 200;
 const HOUR_MS = 3600_000;
 const MAX_ATTEMPTS = 3;
 
