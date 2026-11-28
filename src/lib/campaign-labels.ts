@@ -1,6 +1,9 @@
 /** Tarayıcıda da kullanılır; veritabanı import'u içermemeli. */
 import type { CampaignStatus, RecipientStatus } from "@/db/schema";
 
+/** Kampanya başına kayan bir saatte izin verilen en yüksek gönderim. */
+export const MAX_PER_HOUR = 400;
+
 export const CAMPAIGN_STATUS: Record<CampaignStatus, { label: string; cls: string }> = {
   draft: { label: "Taslak", cls: "bg-stone-100 text-stone-700" },
   running: { label: "Gönderiliyor", cls: "bg-emerald-600 text-white" },

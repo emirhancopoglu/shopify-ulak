@@ -3,6 +3,7 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import type { FormState } from "@/components/ui";
+import { MAX_PER_HOUR } from "@/lib/campaign-labels";
 import {
   createCampaign,
   deleteCampaign,
@@ -49,7 +50,9 @@ export async function saveCampaignSettingsAction(_prev: FormState, fd: FormData)
   const accountId = Number(fd.get("accountId")) || null;
   const perHour = Number(fd.get("perHour"));
   if (!isId(id)) return { ok: false, message: "Geçersiz kampanya." };
-  if (!Number.isFinite(perHour) || perHour < 1) return { ok: false, message: "Saatlik adet en az 1 olmalı." };
+  if (!Number.isFinite(perHour) || perHour < 1 || perHour > MAX_PER_HOUR) {
+    return { ok: false, message: `Saatlik adet 1 ile ${MAX_PER_HOUR} arasında olmalı.` };
+  }
   try {
     updateCampaignSettings(id, { name: String(fd.get("name") ?? ""), templateId, accountId, perHour });
   } catch (err) {
